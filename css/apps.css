@@ -1392,6 +1392,12 @@
   color: var(--text-1);
 }
 .obs-src input { margin: 0; }
+.obs-source-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-2);
+  margin-top: 4px;
+}
 .obs-mixer-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-1); }
 .obs-meter {
   flex: 1;

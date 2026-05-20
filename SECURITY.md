@@ -66,6 +66,12 @@ test-mode rules with something like the policy below, and click Publish.
         ".write": "$uid === auth.uid"
       }
     },
+    "desktop-layouts": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    },
     "cloud-files": {
       "$uid": {
         ".read": "auth != null",
@@ -115,7 +121,7 @@ test-mode rules with something like the policy below, and click Publish.
 
 These rules:
 - Make every Blizzard user able to **read** public-ish data (sites, games, tubes, tunes, channels, messages, streams).
-- Restrict **writes** to the owner where it matters (own profile, own cloud files, own installed apps).
+- Restrict **writes** to the owner where it matters (own profile, own cloud files, own installed apps, own desktop layout).
 - Allow any authenticated user to **publish** sites and to read any other user's profile (needed for the user picker and Profiles app).
 - Are still permissive on `messages`, `channels`, etc. because Blizzard is a small community OS — you may want to tighten those further (e.g., require server membership for serverMessages).
 

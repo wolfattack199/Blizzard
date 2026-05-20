@@ -12,12 +12,17 @@
 </head>
 <body>
   <!-- Boot screen -->
-  <div id="boot" class="boot">
-    <div class="boot-logo">
-      <div class="boot-flake"></div>
+  <div id="boot" class="boot boot-run">
+    <div class="boot-logo" aria-label="Blizzard is starting">
+      <div class="boot-mark" aria-hidden="true">
+        <span class="boot-tile boot-tile-1"></span>
+        <span class="boot-tile boot-tile-2"></span>
+        <span class="boot-tile boot-tile-3"></span>
+        <span class="boot-tile boot-tile-4"></span>
+      </div>
       <div class="boot-title">Blizzard</div>
     </div>
-    <div class="boot-status" id="boot-status">Please sign in to your account</div>
+    <div class="boot-status" id="boot-status">Checking your session...</div>
   </div>
 
   <!-- Auth screen -->
@@ -35,9 +40,10 @@
         <div id="auth-remembered-name" class="auth-remembered-name"></div>
         <div class="auth-remembered-sub">Please sign in to your account</div>
         <form id="auth-remembered-form" class="auth-form" autocomplete="off" style="margin-top:14px">
+          <input id="auth-remembered-username" class="visually-hidden" type="text" autocomplete="username" tabindex="-1" aria-hidden="true" />
           <label class="auth-field">
             <span>Password</span>
-            <input id="auth-remembered-password" type="password" minlength="6" required autofocus />
+            <input id="auth-remembered-password" type="password" minlength="6" autocomplete="current-password" required autofocus />
           </label>
           <div id="auth-remembered-error" class="auth-error"></div>
           <button type="submit" class="auth-submit">Sign in</button>
@@ -48,17 +54,21 @@
       <!-- Full sign-in / sign-up view -->
       <div id="auth-full">
         <div class="auth-tabs">
-          <button class="auth-tab active" data-mode="login">Sign in</button>
-          <button class="auth-tab" data-mode="signup">Create account</button>
+          <button type="button" class="auth-tab active" data-mode="login">Sign in</button>
+          <button type="button" class="auth-tab" data-mode="signup">Create account</button>
         </div>
         <form id="auth-form" class="auth-form" autocomplete="off">
           <label class="auth-field">
             <span>Username</span>
-            <input id="auth-username" type="text" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" required />
+            <input id="auth-username" type="text" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" autocomplete="username" spellcheck="false" required />
           </label>
           <label class="auth-field">
             <span>Password</span>
-            <input id="auth-password" type="password" minlength="6" required />
+            <input id="auth-password" type="password" minlength="6" autocomplete="current-password" required />
+          </label>
+          <label id="auth-confirm-wrap" class="auth-field hidden">
+            <span>Confirm password</span>
+            <input id="auth-confirm-password" type="password" minlength="6" autocomplete="new-password" />
           </label>
           <div id="auth-error" class="auth-error"></div>
           <button type="submit" id="auth-submit" class="auth-submit">Sign in</button>
@@ -119,6 +129,39 @@
     </div>
   </template>
 
+  <script>
+    (() => {
+      const troubleText = "Having trouble connecting. Reconnect to the internet and Blizzard will keep trying...";
+      const boot = () => document.getElementById("boot");
+      const status = () => document.getElementById("boot-status");
+      const auth = () => document.getElementById("auth");
+      const desktop = () => document.getElementById("desktop");
+
+      function appIsWaiting() {
+        return boot() && !boot().classList.contains("hidden") &&
+          auth()?.classList.contains("hidden") &&
+          desktop()?.classList.contains("hidden");
+      }
+
+      function showTrouble() {
+        if (!appIsWaiting()) return;
+        boot().classList.add("boot-loop", "boot-run");
+        if (status()) status().textContent = troubleText;
+      }
+
+      window.addEventListener("offline", showTrouble);
+      window.addEventListener("online", () => {
+        if (!appIsWaiting()) return;
+        if (status()) status().textContent = "Internet reconnected. Restarting Blizzard...";
+        setTimeout(() => location.reload(), 700);
+      });
+      window.addEventListener("error", showTrouble, true);
+      window.addEventListener("unhandledrejection", showTrouble);
+      setTimeout(() => {
+        if (!window.__blizzardMainLoaded) showTrouble();
+      }, 4500);
+    })();
+  </script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

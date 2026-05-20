@@ -38,7 +38,7 @@ export async function mountLivestream(root, ctx) {
             <label class="obs-src"><input type="checkbox" data-bind="src-cam">📷 Camera</label>
             <label class="obs-src"><input type="checkbox" data-bind="src-mic" checked>🎤 Microphone</label>
             <label class="obs-src"><input type="checkbox" data-bind="src-screen" checked>🖥 Screen share</label>
-            <div class="muted" style="font-size:11px;margin-top:6px">Screen share replaces camera video.</div>
+            <div class="obs-source-note">Only this Blizzard tab is allowed. Full screen and window capture are rejected before going live.</div>
           </div>
         </div>
         <div class="obs-panel">
@@ -88,6 +88,7 @@ export async function mountLivestream(root, ctx) {
   const camCb     = root.querySelector('[data-bind="src-cam"]');
   const micCb     = root.querySelector('[data-bind="src-mic"]');
   const screenCb  = root.querySelector('[data-bind="src-screen"]');
+  screenCb.closest(".obs-src").lastChild.textContent = " Blizzard OS tab";
   const titleIn   = root.querySelector('[data-bind="title"]');
   const goBtn     = root.querySelector('[data-act="go"]');
   const stopBtn   = root.querySelector('[data-act="stop"]');
@@ -121,7 +122,7 @@ export async function mountLivestream(root, ctx) {
     try {
       let media;
       if (screenCb.checked) {
-        media = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        media = await captureBlizzardTab();
         if (micCb.checked) {
           try {
             const mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -390,8 +391,8 @@ export async function mountLivestream(root, ctx) {
     alert("All your old streams have been marked offline.");
   };
 
-  // Preview screen-share by default to feel like OBS
-  refreshSources();
+  // Do not prompt immediately on app open. Go Live will capture the selected
+  // default source, and changing any source also refreshes the preview.
 
   return () => {
     // Window is closing — make sure we tear down the broadcast cleanly.
@@ -402,4 +403,32 @@ export async function mountLivestream(root, ctx) {
     if (mediaRecorder) { try { mediaRecorder.stop(); } catch {} }
     if (activeMedia) activeMedia.getTracks().forEach((t) => t.stop());
   };
+}
+
+async function captureBlizzardTab() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error("Your browser does not support tab capture.");
+  }
+
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      displaySurface: "browser",
+      logicalSurface: true,
+      cursor: "always"
+    },
+    audio: false,
+    preferCurrentTab: true,
+    selfBrowserSurface: "include",
+    monitorTypeSurfaces: "exclude",
+    surfaceSwitching: "exclude"
+  });
+
+  const videoTrack = stream.getVideoTracks()[0];
+  const settings = videoTrack?.getSettings?.() || {};
+  if (settings.displaySurface !== "browser") {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error("Select the current Blizzard browser tab, not your screen or another window.");
+  }
+
+  return stream;
 }

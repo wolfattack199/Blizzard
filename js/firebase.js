@@ -620,13 +620,126 @@ export async function uninstallApp(uid, id) {
   await remove(ref(db, `installed/${uid}/${id}`));
 }
 
-// Apps available in the Blizzard Store (user-submitted). Built-in entries
-// are added by the store UI; user-published ones live here.
+// --------------------------------------------------------------------------
+// Desktop layout — per-user icon positions, synced across devices.
+// --------------------------------------------------------------------------
+export async function loadDesktopIconPositions(uid) {
+  const snap = await get(ref(db, `desktop-layouts/${uid}/icons`));
+  return normalizeIconPositions(snap.val());
+}
+
+export function subscribeDesktopIconPositions(uid, callback) {
+  const r = ref(db, `desktop-layouts/${uid}/icons`);
+  return onValue(r, (snap) => {
+    callback(normalizeIconPositions(snap.val()));
+  }, () => callback({}));
+}
+
+export async function saveDesktopIconPositions(uid, positions) {
+  await set(ref(db, `desktop-layouts/${uid}/icons`), serializeIconPositions(positions));
+}
+
+function serializeIconPositions(positions = {}) {
+  const out = {};
+  for (const [id, pos] of Object.entries(positions || {})) {
+    const safeId = encodeKey(id);
+    const x = Number.isFinite(pos?.x) ? Math.round(pos.x) : 0;
+    const y = Number.isFinite(pos?.y) ? Math.round(pos.y) : 0;
+    out[safeId] = { id, x, y, updatedAt: Date.now() };
+  }
+  return out;
+}
+
+function normalizeIconPositions(raw = {}) {
+  const out = {};
+  for (const [key, pos] of Object.entries(raw || {})) {
+    const id = pos?.id || key;
+    if (!id) continue;
+    const x = Number(pos?.x);
+    const y = Number(pos?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out[id] = { x, y };
+  }
+  return out;
+}
+
+// Apps available in the Blizzard Store. Official app records are seeded into
+// Firebase so the Store catalog is shared across users/devices instead of
+// being hardcoded in the Store UI.
+const DEFAULT_STORE_APPS = [
+  {
+    id: "engine",
+    title: "Blizzard Engine",
+    glyph: "BE",
+    builtin: "engine",
+    official: true,
+    description: "Drag-and-drop 2D game maker. Drop sprites onto a stage, choose the player, hit Run, and publish to the Community Hub.",
+    authorUid: "system",
+    authorUsername: "Blizzard",
+    createdAt: 0
+  },
+  {
+    id: "paint",
+    title: "Paint",
+    glyph: "P",
+    builtin: "paint",
+    official: true,
+    description: "Classic canvas drawing with pencil, brush, eraser, fill, line, rectangle, and save-to-files.",
+    authorUid: "system",
+    authorUsername: "Blizzard",
+    createdAt: 0
+  },
+  {
+    id: "notes",
+    title: "Notes",
+    glyph: "N",
+    builtin: "notes",
+    official: true,
+    description: "Sticky notes that sync to your Blizzard account.",
+    authorUid: "system",
+    authorUsername: "Blizzard",
+    createdAt: 0
+  },
+  {
+    id: "calculator",
+    title: "Calculator",
+    glyph: "C",
+    builtin: "calculator",
+    official: true,
+    description: "Standard four-function calculator with keyboard shortcuts.",
+    authorUid: "system",
+    authorUsername: "Blizzard",
+    createdAt: 0
+  },
+  {
+    id: "music",
+    title: "Music",
+    glyph: "M",
+    builtin: "music",
+    official: true,
+    description: "Drag-and-drop audio player for local .mp3 and .wav files.",
+    authorUid: "system",
+    authorUsername: "Blizzard",
+    createdAt: 0
+  }
+];
+
+export async function ensureDefaultStoreApps() {
+  await Promise.all(DEFAULT_STORE_APPS.map(async (app) => {
+    const snap = await get(ref(db, `apps/${app.id}`));
+    if (!snap.exists()) await set(ref(db, `apps/${app.id}`), app);
+  }));
+}
+
 export async function listStoreApps() {
   const snap = await get(ref(db, `apps`));
   const out = [];
   snap.forEach((c) => out.push({ id: c.key, ...c.val() }));
-  return out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return out.sort((a, b) => {
+    const official = Number(!!b.official) - Number(!!a.official);
+    if (official) return official;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
 }
 export async function publishStoreApp(authorUid, authorUsername, { title, description, code, glyph }) {
   const id = push(ref(db, `apps`)).key;

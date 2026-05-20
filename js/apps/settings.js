@@ -1,5 +1,5 @@
 // Settings — profile, appearance, about, danger zone.
-import { auth, listUsers } from "../firebase.js";
+import { auth, signOut, listUsers } from "../firebase.js";
 import * as FS from "../fs.js";
 import { escapeHtml } from "../os/wm.js";
 import { getAppearance, setAppearance, applyAppearance, APPEARANCE_PRESETS } from "../os/appearance.js";
@@ -48,7 +48,9 @@ export async function mountSettings(root, ctx) {
         </div>
       `;
       content.querySelector('[data-act="signout"]').onclick = async () => {
-        if (confirm("Sign out of Blizzard OS?")) await auth.signOut();
+        if (!confirm("Sign out of Blizzard OS?")) return;
+        await window.bzFlushDesktopLayout?.().catch(() => {});
+        await signOut(auth);
       };
     } else if (tab === "appearance") {
       const cur = getAppearance();

@@ -4,12 +4,16 @@ import { openWindow, onWindowsChanged, toggleTaskbar, focusWindow, closeAllWindo
 import { doSignOut } from "../auth.js";
 import { escapeHtml } from "./wm.js";
 import { setAppearanceUser, applyAppearance } from "./appearance.js";
-import { subscribeInstalledApps, getStoreApp } from "../firebase.js";
+import { subscribeInstalledApps, getStoreApp, subscribeDesktopIconPositions, saveDesktopIconPositions } from "../firebase.js";
 
 let currentUser = null;
 let runtimeServices = null;
 let installedApps = []; // from Firebase, list of app entries
 let installedAppsUnsub = null;
+let iconPositions = {};
+let iconPositionsUnsub = null;
+let iconPositionsSaveTimer = null;
+let iconPositionsDirty = false;
 
 function availableApps() {
   // Non-storeOnly built-in apps + storeOnly apps that are installed + user-published installed apps
@@ -56,6 +60,9 @@ export function bootDesktop(user, services) {
   setAppearanceUser(user.uid);
   applyAppearance();
 
+  setupIconPositionSync(user.uid);
+  window.bzFlushDesktopLayout = flushDesktopLayout;
+
   // Subscribe to installed apps from Firebase so installs from the Store
   // appear in the start menu in real time.
   if (installedAppsUnsub) installedAppsUnsub();
@@ -78,11 +85,13 @@ export function bootDesktop(user, services) {
 }
 
 export function shutdownDesktop() {
+  flushDesktopLayout().catch(() => {});
   closeAllWindows();
   document.getElementById("desktop-surface").innerHTML = "";
   document.getElementById("start-apps").innerHTML = "";
   document.getElementById("taskbar-apps").innerHTML = "";
   if (installedAppsUnsub) { installedAppsUnsub(); installedAppsUnsub = null; }
+  if (iconPositionsUnsub) { iconPositionsUnsub(); iconPositionsUnsub = null; }
 }
 
 export function launchApp(id, extraCtx = {}) {
@@ -117,12 +126,92 @@ const ICON_W = 88, ICON_H = 96, GRID_GAP = 8, GRID_PAD = 20;
 function iconPositionsKey() {
   return `blizzard.iconPositions.${currentUser?.uid || "guest"}`;
 }
-function loadIconPositions() {
+function loadLocalIconPositions() {
   try { return JSON.parse(localStorage.getItem(iconPositionsKey()) || "{}"); }
   catch { return {}; }
 }
-function saveIconPositions(map) {
+function saveLocalIconPositions(map) {
   localStorage.setItem(iconPositionsKey(), JSON.stringify(map));
+}
+function loadIconPositions() {
+  return iconPositions || {};
+}
+function saveIconPositions(map, { immediate = false } = {}) {
+  iconPositions = { ...(map || {}) };
+  saveLocalIconPositions(iconPositions);
+  iconPositionsDirty = true;
+
+  if (iconPositionsSaveTimer) {
+    clearTimeout(iconPositionsSaveTimer);
+    iconPositionsSaveTimer = null;
+  }
+
+  if (immediate) {
+    return flushDesktopLayout({ capture: false });
+  }
+
+  iconPositionsSaveTimer = setTimeout(() => {
+    flushDesktopLayout({ capture: false }).catch((err) => console.warn("Desktop layout sync failed:", err));
+  }, 500);
+}
+
+function setupIconPositionSync(uid) {
+  if (iconPositionsUnsub) iconPositionsUnsub();
+  if (iconPositionsSaveTimer) {
+    clearTimeout(iconPositionsSaveTimer);
+    iconPositionsSaveTimer = null;
+  }
+
+  iconPositionsDirty = false;
+  iconPositions = loadLocalIconPositions();
+
+  iconPositionsUnsub = subscribeDesktopIconPositions(uid, (remotePositions) => {
+    const remoteHasPositions = Object.keys(remotePositions || {}).length > 0;
+    if (iconPositionsDirty && remoteHasPositions) return;
+    if (remoteHasPositions) {
+      iconPositions = remotePositions;
+      iconPositionsDirty = false;
+      saveLocalIconPositions(iconPositions);
+      renderDesktopIcons();
+      return;
+    }
+
+    const localPositions = loadLocalIconPositions();
+    if (Object.keys(localPositions).length > 0) {
+      iconPositions = localPositions;
+      saveIconPositions(iconPositions, { immediate: true })
+        .catch((err) => console.warn("Desktop layout migration failed:", err));
+      renderDesktopIcons();
+      return;
+    }
+
+    iconPositions = {};
+    renderDesktopIcons();
+  });
+}
+
+function captureIconPositionsFromDOM() {
+  const next = { ...loadIconPositions() };
+  document.querySelectorAll(".desk-icon[data-app-id]").forEach((icon) => {
+    next[icon.dataset.appId] = {
+      x: parseInt(icon.style.left, 10) || 0,
+      y: parseInt(icon.style.top, 10) || 0
+    };
+  });
+  return next;
+}
+
+export async function flushDesktopLayout({ capture = true } = {}) {
+  if (iconPositionsSaveTimer) {
+    clearTimeout(iconPositionsSaveTimer);
+    iconPositionsSaveTimer = null;
+  }
+  if (!currentUser?.uid) return;
+
+  if (capture) iconPositions = captureIconPositionsFromDOM();
+  saveLocalIconPositions(iconPositions);
+  await saveDesktopIconPositions(currentUser.uid, iconPositions);
+  iconPositionsDirty = false;
 }
 
 function pinnedKey() { return `blizzard.pinned.${currentUser?.uid || "guest"}`; }
@@ -500,7 +589,9 @@ function setupTrayUser() {
   document.getElementById("start-username").textContent = currentUser.username;
   renderStartAvatar();
   document.getElementById("start-signout").onclick = async () => {
-    if (confirm("Sign out of Blizzard?")) await doSignOut();
+    if (!confirm("Sign out of Blizzard?")) return;
+    await flushDesktopLayout().catch(() => {});
+    await doSignOut();
   };
 }
 
