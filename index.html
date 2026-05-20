@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Blizzard OS</title>
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/auth.css" />
+  <link rel="stylesheet" href="css/desktop.css" />
+  <link rel="stylesheet" href="css/window.css" />
+  <link rel="stylesheet" href="css/apps.css" />
+</head>
+<body>
+  <!-- Boot screen -->
+  <div id="boot" class="boot">
+    <div class="boot-logo">
+      <div class="boot-flake"></div>
+      <div class="boot-title">Blizzard</div>
+    </div>
+    <div class="boot-status" id="boot-status">Please sign in to your account</div>
+  </div>
+
+  <!-- Auth screen -->
+  <div id="auth" class="auth hidden">
+    <div class="auth-bg"></div>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="auth-flake"></div>
+        <div class="auth-brand-text">Blizzard</div>
+      </div>
+
+      <!-- Returning-user view: shows the last signed-in profile -->
+      <div id="auth-remembered" class="auth-remembered hidden">
+        <div id="auth-remembered-avatar" class="auth-remembered-avatar"></div>
+        <div id="auth-remembered-name" class="auth-remembered-name"></div>
+        <div class="auth-remembered-sub">Please sign in to your account</div>
+        <form id="auth-remembered-form" class="auth-form" autocomplete="off" style="margin-top:14px">
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="auth-remembered-password" type="password" minlength="6" required autofocus />
+          </label>
+          <div id="auth-remembered-error" class="auth-error"></div>
+          <button type="submit" class="auth-submit">Sign in</button>
+        </form>
+        <button type="button" id="auth-switch-account" class="auth-switch">Use a different account</button>
+      </div>
+
+      <!-- Full sign-in / sign-up view -->
+      <div id="auth-full">
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-mode="login">Sign in</button>
+          <button class="auth-tab" data-mode="signup">Create account</button>
+        </div>
+        <form id="auth-form" class="auth-form" autocomplete="off">
+          <label class="auth-field">
+            <span>Username</span>
+            <input id="auth-username" type="text" maxlength="20" pattern="[a-zA-Z0-9_]{3,20}" required />
+          </label>
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="auth-password" type="password" minlength="6" required />
+          </label>
+          <div id="auth-error" class="auth-error"></div>
+          <button type="submit" id="auth-submit" class="auth-submit">Sign in</button>
+        </form>
+        <div class="auth-hint">Usernames are 3–20 chars, letters/numbers/underscores. Passwords are 6+ chars.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Desktop (loaded after login) -->
+  <div id="desktop" class="desktop hidden">
+    <div id="desktop-surface" class="desktop-surface"></div>
+    <div id="windows" class="windows-layer"></div>
+    <div id="taskbar" class="taskbar">
+      <button id="start-btn" class="start-btn" aria-label="Start menu" title="Start (Alt+A)">
+        <span class="start-flake"></span>
+      </button>
+      <div id="taskbar-search" class="taskbar-search">
+        <input id="search-input" type="text" placeholder="Search apps and Blizzard…" />
+      </div>
+      <div id="taskbar-apps" class="taskbar-apps"></div>
+      <div class="taskbar-tray">
+        <span id="tray-user" class="tray-user"></span>
+        <span id="tray-clock" class="tray-clock"></span>
+      </div>
+    </div>
+    <div id="start-menu" class="start-menu hidden">
+      <div class="start-header">
+        <div class="start-avatar" id="start-avatar"></div>
+        <div>
+          <div class="start-username" id="start-username"></div>
+          <button class="start-signout" id="start-signout">Sign out</button>
+        </div>
+      </div>
+      <div class="start-search">
+        <input id="start-search-input" type="text" placeholder="Type to search apps…" />
+      </div>
+      <div class="start-apps" id="start-apps"></div>
+    </div>
+    <div id="context-menu" class="context-menu hidden"></div>
+    <div id="calendar" class="calendar hidden"></div>
+  </div>
+
+  <!-- Templates -->
+  <template id="tpl-window">
+    <div class="window" tabindex="-1">
+      <div class="window-titlebar">
+        <div class="window-icon"></div>
+        <div class="window-title"></div>
+        <div class="window-actions">
+          <button class="win-btn win-min" title="Minimize">–</button>
+          <button class="win-btn win-max" title="Maximize">▢</button>
+          <button class="win-btn win-close" title="Close">×</button>
+        </div>
+      </div>
+      <div class="window-body"></div>
+      <div class="window-resize"></div>
+    </div>
+  </template>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

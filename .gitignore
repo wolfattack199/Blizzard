@@ -1,0 +1,15 @@
+# OS junk
+Thumbs.db
+.DS_Store
+ehthumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Node (just in case)
+node_modules/
+npm-debug.log
+yarn-error.log
