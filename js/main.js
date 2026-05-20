@@ -7,7 +7,7 @@ import { seedGamesIfEmpty, ensureDefaultChannels, ensureDefaultStoreApps, killAl
 const $ = (id) => document.getElementById(id);
 let authRun = 0;
 window.__blizzardMainLoaded = true;
-const CONNECTION_TROUBLE = "Having trouble connecting. Reconnect to the internet and Blizzard will keep trying...";
+const OFFLINE_TROUBLE = "No internet connection. Reconnect and Blizzard will keep trying...";
 
 (function boot() {
   showBoot("Checking your session...");
@@ -103,6 +103,6 @@ function setupConnectionWatch() {
 }
 
 function showConnectionTrouble() {
-  showBoot(CONNECTION_TROUBLE);
+  showBoot(OFFLINE_TROUBLE);
   $("boot").classList.add("boot-loop");
 }

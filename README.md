@@ -27,7 +27,12 @@ Built with vanilla HTML / CSS / JavaScript and a Firebase Realtime Database back
 
 ## Running locally
 
-The OS uses ES modules + IndexedDB, so it must be served over HTTP (not opened as `file://`).
+You can double-click `index.html` to open Blizzard directly in Chrome, Edge, or
+ChromeOS. `index.html` includes a bundled copy of the app for `file://` launches,
+so you do not need Dev Mode or Visual Studio just to use it.
+
+If you are editing the source files, serve the folder over HTTP so the browser
+loads the separate modules from `js/`:
 
 ```sh
 npx serve .
@@ -36,6 +41,18 @@ python -m http.server 8000
 ```
 
 Then visit `http://localhost:8000`.
+
+After changing files in `js/`, rebuild the double-click bundle:
+
+```sh
+node tools/build-file-bundle.mjs
+```
+
+ChromeOS note: Firebase still needs internet access to Google Firebase domains
+such as `www.gstatic.com`, `firebaseapp.com`, `googleapis.com`, and the
+Realtime Database URL in `js/config.js`. If those are blocked by a school or
+managed device policy, Blizzard will open but login/cloud features cannot
+connect until they are allowed.
 
 ## Firebase setup
 
