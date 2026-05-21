@@ -7,7 +7,7 @@ import { showToast } from "./toasts.js";
 
 const REPO          = "wolfattack199/Blizzard";
 const BRANCH        = "main";
-const LOCAL_BUILD_SHA = "3fb436e99ffa2d76fc2e8685705985427f521163";
+const LOCAL_BUILD_SHA = "25e79e8";
 const REPO_URL      = `https://github.com/${REPO}`;
 const SUPPRESS_KEY  = "blizzard.suppressUpdateSha";
 const CHECK_DELAY   = 6000;    // wait until after boot animations
@@ -29,7 +29,11 @@ async function checkOnce() {
     const json = await res.json();
     remoteSha = json?.sha;
   } catch { return; }
-  if (!remoteSha || remoteSha === LOCAL_BUILD_SHA) return;
+  // Allow the local SHA to be a short prefix (e.g. "25e79e8") of the full
+  // 40-char GitHub SHA — saves having to look up the full hash by hand.
+  if (!remoteSha) return;
+  if (remoteSha === LOCAL_BUILD_SHA) return;
+  if (LOCAL_BUILD_SHA && remoteSha.startsWith(LOCAL_BUILD_SHA)) return;
   // Don't pester the user — if they dismissed an update toast for this exact SHA, stay silent.
   if (localStorage.getItem(SUPPRESS_KEY) === remoteSha) return;
   showUpdateToast(remoteSha);

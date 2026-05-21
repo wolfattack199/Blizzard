@@ -12788,7 +12788,7 @@ function showToast(opts) {
 // js/os/updates.js
 var REPO = "wolfattack199/Blizzard";
 var BRANCH = "main";
-var LOCAL_BUILD_SHA = "3fb436e99ffa2d76fc2e8685705985427f521163";
+var LOCAL_BUILD_SHA = "25e79e8";
 var REPO_URL = `https://github.com/${REPO}`;
 var SUPPRESS_KEY = "blizzard.suppressUpdateSha";
 var CHECK_DELAY = 6e3;
@@ -12810,7 +12810,9 @@ async function checkOnce() {
   } catch {
     return;
   }
-  if (!remoteSha || remoteSha === LOCAL_BUILD_SHA) return;
+  if (!remoteSha) return;
+  if (remoteSha === LOCAL_BUILD_SHA) return;
+  if (LOCAL_BUILD_SHA && remoteSha.startsWith(LOCAL_BUILD_SHA)) return;
   if (localStorage.getItem(SUPPRESS_KEY) === remoteSha) return;
   showUpdateToast(remoteSha);
 }
