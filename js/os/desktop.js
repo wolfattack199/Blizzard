@@ -4,7 +4,11 @@ import { openWindow, onWindowsChanged, toggleTaskbar, focusWindow, closeAllWindo
 import { doSignOut } from "../auth.js";
 import { escapeHtml } from "./wm.js";
 import { setAppearanceUser, applyAppearance } from "./appearance.js";
-import { subscribeInstalledApps, getStoreApp, subscribeDesktopIconPositions, saveDesktopIconPositions } from "../firebase.js";
+import {
+  subscribeInstalledApps, getStoreApp, subscribeDesktopIconPositions, saveDesktopIconPositions,
+  subscribePinnedApps, savePinnedApps,
+  setUserStatus, getStorageSummary, formatBytes
+} from "../firebase.js";
 
 let currentUser = null;
 let runtimeServices = null;
@@ -14,11 +18,19 @@ let iconPositions = {};
 let iconPositionsUnsub = null;
 let iconPositionsSaveTimer = null;
 let iconPositionsDirty = false;
+let mentionListenerInstalled = false;
+let idleListenerInstalled = false;
+let idleTimer = null;
+const USER_STATUSES = ["online", "idle", "dnd", "invisible"];
 
 function availableApps() {
-  // Non-storeOnly built-in apps + storeOnly apps that are installed + user-published installed apps
+  // Visible apps = non-hidden built-ins (with non-storeOnly OR installed) +
+  // user-published installed apps. Hidden apps (admin/mod) never appear; they
+  // can still be launched via launchApp(id) from the terminal's ghiy command.
   const installedIds = new Set(installedApps.map((a) => a.id));
-  const builtinVisible = APPS.filter((a) => !a.storeOnly || installedIds.has(a.id));
+  const builtinVisible = APPS.filter((a) =>
+    !a.hidden && (!a.storeOnly || installedIds.has(a.id))
+  );
   const userInstalled = installedApps
     .filter((a) => !a.builtin) // user-published code apps
     .map((a) => ({
@@ -61,6 +73,7 @@ export function bootDesktop(user, services) {
   applyAppearance();
 
   setupIconPositionSync(user.uid);
+  setupPinnedSync(user.uid);
   window.bzFlushDesktopLayout = flushDesktopLayout;
 
   // Subscribe to installed apps from Firebase so installs from the Store
@@ -77,6 +90,8 @@ export function bootDesktop(user, services) {
   renderTaskbarApps([]);
   setupClock();
   setupTrayUser();
+  setupMentionToasts();
+  setupIdleStatus();
   setupStartButton();
   setupSearch();
   setupContextMenus();
@@ -86,18 +101,26 @@ export function bootDesktop(user, services) {
 
 export function shutdownDesktop() {
   flushDesktopLayout().catch(() => {});
+  if (currentUser?.uid) setUserStatus(currentUser.uid, "offline").catch(() => {});
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   closeAllWindows();
   document.getElementById("desktop-surface").innerHTML = "";
   document.getElementById("start-apps").innerHTML = "";
   document.getElementById("taskbar-apps").innerHTML = "";
   if (installedAppsUnsub) { installedAppsUnsub(); installedAppsUnsub = null; }
   if (iconPositionsUnsub) { iconPositionsUnsub(); iconPositionsUnsub = null; }
+  if (pinnedUnsub) { pinnedUnsub(); pinnedUnsub = null; }
 }
 
 export function launchApp(id, extraCtx = {}) {
   let app = getApp(id);
   if (!app) app = availableApps().find((a) => a.id === id);
   if (!app) return;
+  if (currentUser?.appBans?.[id]) {
+    alert(`You cannot open ${app.name} because this account is banned from that app.`);
+    hideStartMenu();
+    return;
+  }
   openWindow({
     id: app.id,
     title: app.name,
@@ -120,6 +143,7 @@ export function openInBrowserTab(html, title) {
   }
 }
 window.bzOpenInBrowserTab = openInBrowserTab;
+window.bzLaunchApp = launchApp;
 
 const ICON_W = 88, ICON_H = 96, GRID_GAP = 8, GRID_PAD = 20;
 
@@ -220,7 +244,11 @@ function loadPinned() {
   catch { return []; }
 }
 function savePinned(arr) {
+  // Mirror to localStorage immediately (instant UI) and to Firebase (cross-device).
   localStorage.setItem(pinnedKey(), JSON.stringify(arr));
+  if (currentUser?.uid) {
+    savePinnedApps(currentUser.uid, arr).catch((err) => console.warn("Pinned-app sync failed:", err));
+  }
 }
 function isPinned(appId) { return loadPinned().includes(appId); }
 function togglePinned(appId) {
@@ -230,6 +258,19 @@ function togglePinned(appId) {
   else arr.push(appId);
   savePinned(arr);
   renderTaskbarApps(currentWindows);
+}
+// Live-sync from other devices: when the remote list changes, mirror it
+// locally and re-render the taskbar. Skip if the remote is identical to
+// what we already have (avoids fighting our own writes).
+let pinnedUnsub = null;
+function setupPinnedSync(uid) {
+  if (pinnedUnsub) pinnedUnsub();
+  pinnedUnsub = subscribePinnedApps(uid, (remote) => {
+    const local = loadPinned();
+    if (JSON.stringify(remote) === JSON.stringify(local)) return;
+    localStorage.setItem(pinnedKey(), JSON.stringify(remote));
+    renderTaskbarApps(currentWindows);
+  });
 }
 
 let currentWindows = [];
@@ -587,12 +628,198 @@ function setupClock() {
 function setupTrayUser() {
   document.getElementById("tray-user").textContent = "@" + currentUser.username;
   document.getElementById("start-username").textContent = currentUser.username;
+  document.getElementById("start-username").title = "Click to change status";
+  document.getElementById("start-username").onclick = cycleUserStatus;
+  updateStartStorage();
+  renderUserStatus();
   renderStartAvatar();
   document.getElementById("start-signout").onclick = async () => {
     if (!confirm("Sign out of Blizzard?")) return;
     await flushDesktopLayout().catch(() => {});
     await doSignOut();
   };
+}
+
+async function updateStartStorage() {
+  const el = document.getElementById("start-storage");
+  if (!el || !currentUser?.uid) return;
+  el.textContent = "Calculating storage...";
+  el.onclick = (event) => {
+    event.stopPropagation();
+    launchApp("settings", { initialTab: "storage" });
+  };
+  try {
+    const summary = await getStorageSummary(currentUser.uid);
+    el.textContent = `${formatBytes(summary.used)} / ${formatBytes(summary.quota)}`;
+  } catch {
+    el.textContent = "Storage unavailable";
+  }
+}
+
+function cycleUserStatus() {
+  const current = currentUser.status || "online";
+  const next = USER_STATUSES[(USER_STATUSES.indexOf(current) + 1) % USER_STATUSES.length] || "online";
+  applyUserStatus(next, { persist: true });
+}
+
+function applyUserStatus(status, { persist = false } = {}) {
+  currentUser.status = status;
+  renderUserStatus();
+  if (persist && currentUser?.uid) setUserStatus(currentUser.uid, status).catch(() => {});
+}
+
+function renderUserStatus() {
+  const tray = document.getElementById("tray-user");
+  const start = document.getElementById("start-username");
+  const status = currentUser?.status || "online";
+  if (tray) tray.textContent = `@${currentUser.username} · ${status}`;
+  if (start) start.textContent = `${currentUser.username} · ${status}`;
+}
+
+function setupIdleStatus() {
+  const reset = () => {
+    if (!currentUser) return;
+    if (currentUser.status === "idle") applyUserStatus("online", { persist: true });
+    if (idleTimer) clearTimeout(idleTimer);
+    if (currentUser.status === "online") {
+      idleTimer = setTimeout(() => {
+        if (currentUser?.status === "online") applyUserStatus("idle", { persist: true });
+      }, 5 * 60 * 1000);
+    }
+  };
+  if (!idleListenerInstalled) {
+    idleListenerInstalled = true;
+    ["mousemove", "keydown", "focus"].forEach((event) => window.addEventListener(event, reset));
+  }
+  if (!["dnd", "invisible"].includes(currentUser.status || "")) applyUserStatus("online", { persist: true });
+  reset();
+}
+
+function setupMentionToasts() {
+  if (mentionListenerInstalled) return;
+  mentionListenerInstalled = true;
+  document.addEventListener("blizzard:mention", (event) => {
+    if (!currentUser || ["dnd", "invisible", "offline"].includes(currentUser.status)) return;
+    showMentionToast(event.detail || {});
+  });
+  document.addEventListener("blizzard:achievement", (event) => {
+    if (!currentUser || currentUser.status === "dnd") return;
+    showAchievementToast(event.detail || {});
+  });
+}
+
+function getToastStack() {
+  let stack = document.getElementById("toast-stack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.id = "toast-stack";
+    stack.className = "toast-stack";
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
+function showMentionToast(detail) {
+  const stack = getToastStack();
+  while (stack.children.length >= 3) stack.firstElementChild?.remove();
+  const toast = document.createElement("div");
+  toast.className = "mention-toast";
+  const preview = String(detail.text || "").length > 80 ? String(detail.text).slice(0, 77) + "..." : String(detail.text || "");
+  const letter = (detail.senderUsername || "?")[0].toUpperCase();
+  toast.innerHTML = `
+    <div class="mention-avatar">${escapeHtml(letter)}</div>
+    <div class="mention-body">
+      <div class="mention-head"><b>@${escapeHtml(detail.senderUsername || "unknown")}</b><span>${escapeHtml(detail.context || "")}</span></div>
+      <div class="mention-preview">${escapeHtml(preview)}</div>
+      <div class="mention-time">just now</div>
+    </div>
+  `;
+  let timer = setTimeout(close, 4000);
+  toast.addEventListener("mouseenter", () => clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => { timer = setTimeout(close, 1800); });
+  toast.addEventListener("click", () => {
+    launchApp(detail.appId || "messenger");
+    close();
+  });
+  stack.appendChild(toast);
+  playMentionSound();
+
+  function close() {
+    toast.classList.add("closing");
+    setTimeout(() => toast.remove(), 160);
+  }
+}
+
+function showAchievementToast(detail) {
+  const stack = getToastStack();
+  while (stack.children.length >= 3) stack.firstElementChild?.remove();
+  const toast = document.createElement("div");
+  const tier = String(detail.tier || "bronze").toLowerCase();
+  toast.className = `mention-toast achievement-toast tier-${tier}`;
+  const points = Number(detail.points) || 0;
+  const particles = tier === "platinum"
+    ? Array.from({ length: 8 }, (_, i) => `<span class="achievement-particle" style="--i:${i}"></span>`).join("")
+    : "";
+  toast.innerHTML = `
+    ${particles}
+    <div class="achievement-badge">${escapeHtml(detail.glyph || "*")}</div>
+    <div class="mention-body">
+      <div class="achievement-kicker">Achievement Unlocked</div>
+      <div class="achievement-name">${escapeHtml(detail.name || "New badge")}</div>
+      <div class="mention-preview">${escapeHtml(detail.description || "")}</div>
+      <div class="achievement-points">+${points} points</div>
+    </div>
+  `;
+  let timer = setTimeout(close, 6000);
+  toast.addEventListener("mouseenter", () => clearTimeout(timer));
+  toast.addEventListener("mouseleave", () => { timer = setTimeout(close, 2200); });
+  stack.appendChild(toast);
+  playAchievementSound();
+
+  function close() {
+    toast.classList.add("closing");
+    setTimeout(() => toast.remove(), 160);
+  }
+}
+
+function playMentionSound() {
+  if (localStorage.getItem("blizzard.muteNotificationSounds") === "1") return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.1);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.11);
+    setTimeout(() => ctx.close?.(), 180);
+  } catch {}
+}
+
+function playAchievementSound() {
+  if (localStorage.getItem("blizzard.muteNotificationSounds") === "1") return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.09, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.24);
+    [660, 880, 1320].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + idx * 0.055);
+      osc.stop(ctx.currentTime + 0.18 + idx * 0.055);
+    });
+    setTimeout(() => ctx.close?.(), 320);
+  } catch {}
 }
 
 function renderStartAvatar() {
@@ -667,6 +894,11 @@ function setupSearch() {
     if (e.key === "Enter") {
       const q = input.value.trim();
       if (!q) return;
+      if (q.toLowerCase() === "ghiy") {
+        launchApp("admin");
+        input.value = "";
+        return;
+      }
       const app = APPS.find((a) => a.name.toLowerCase().includes(q.toLowerCase()));
       if (app) {
         launchApp(app.id);

@@ -14,6 +14,13 @@ export async function renderApisPage(host, ctx, navigate, route) {
 
       <h2 style="margin-top:32px;color:var(--accent-2)">🌐 Site APIs (window.bz)</h2>
       <p>Any site published on Blizzard (e.g. <code>blizz://mysite.com</code>) has a <code>window.bz</code> global. It's the OS-provided "backend": a per-site key/value store, message bus, and identity helper. No server code needed.</p>
+      <h3>Multiplayer rooms</h3>
+      <pre><code>const room = await bz.multiplayer.join({ gameId: "snake-battle", maxPlayers: 4 });
+await room.set("playerPositions/" + room.iAm.uid, { x: 12, y: 8 });
+room.onUpdate("playerPositions", (positions) => redraw(positions));
+room.emit("hit", { target: otherUid, damage: 10 });
+room.onEvent("hit", (event) => playHit(event.data));</code></pre>
+      <p>Rooms allow up to 16 players, coalesce fast state writes to about 30 updates per second per player, and cap shared room state at 1024 KB.</p>
       ${apiCard("Auth — who's visiting", "auth", `
 const me = await bz.auth.whoami();
 console.log(me.username, me.uid);  // e.g. "alex", "kF8…"`)}

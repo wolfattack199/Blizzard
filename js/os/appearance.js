@@ -60,6 +60,11 @@ export function getAppearance() {
 export function setAppearance(next) {
   localStorage.setItem(storageKey(), JSON.stringify(next));
   applyAppearance();
+  if (currentUid && currentUid !== "guest") {
+    import("../achievements.js")
+      .then((mod) => mod.unlockDirectForUser(currentUid, "customizer"))
+      .catch(() => {});
+  }
 }
 
 export function applyAppearance() {

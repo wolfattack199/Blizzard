@@ -1,21 +1,42 @@
-MIT License
+Blizzard OS License — Personal Use Only
+=======================================
 
-Copyright (c) 2026 wolfattack199
+Copyright (c) 2026 wolfattack199. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Blizzard OS is FREE to use for personal, non-commercial purposes. You can
+clone this repository, run it locally, and use it as your own browser-based
+operating system at no charge.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may NOT:
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+  1. Modify the source code and redistribute the modified version, in source
+     or compiled form, in whole or in part.
+
+  2. Resell, sublicense, rent, lease, lend, or otherwise commercially
+     distribute Blizzard OS, modified or unmodified.
+
+  3. Mirror or rehost this repository on another forge (GitHub fork allowed
+     only for the purpose of contributing back via pull request to
+     https://github.com/wolfattack199/Blizzard).
+
+  4. Pass off Blizzard OS, in whole or in part, as your own work.
+
+  5. Remove, alter, or obscure this notice or any copyright / branding within
+     the software.
+
+You MAY:
+
+  - Use Blizzard OS as your daily-driver personal operating system.
+  - Run a personal Firebase instance to host your own Blizzard.
+  - Share screenshots, recordings, and write about your experience.
+  - Open issues and submit pull requests upstream.
+
+The software is provided "AS IS", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose, and noninfringement. In no event shall the
+author be liable for any claim, damages, or other liability, whether in an
+action of contract, tort, or otherwise, arising from, out of, or in
+connection with the software or the use or other dealings in the software.
+
+All rights not expressly granted above are reserved by the copyright holder.
+For licensing inquiries, contact the repository owner via the GitHub repo.

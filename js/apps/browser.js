@@ -14,9 +14,18 @@ import { renderApisPage } from "./apis.js";
 import { renderReportsPage, openReportDialog } from "./reports.js";
 import { renderTunes } from "./tunes.js";
 import { renderBlizzStore } from "./blizzstore.js";
+import { mountMod } from "./mod.js";
+import { renderAchievementsPage } from "./achievements.js";
+import { mountProfiles } from "./profiles.js";
 import { subscribeMyExtensions } from "../firebase.js";
+import {
+  joinMultiplayerRoom, leaveMultiplayerRoom, setRoomState, getRoomState,
+  subscribeRoomState, emitRoomEvent, subscribeRoomEvents
+} from "../multiplayer.js";
 
 const HOME = "blizz://home";
+const multiplayerSessions = new Map();
+let nextMultiplayerSession = 1;
 
 function tabsStorageKey(uid)     { return `blizzard.browser.tabs.${uid || "guest"}`; }
 function bookmarksStorageKey(uid){ return `blizzard.browser.bookmarks.${uid || "guest"}`; }
@@ -46,6 +55,9 @@ const BUILT_INS = {
   "apis.blz":      renderBuiltInApis,
   "api.blz":       renderBuiltInApis,
   "reports.blz":   renderBuiltInReports,
+  // mod.blz removed — Mod Queue is admin-only via terminal ghiy command.
+  "achievements.blz": renderBuiltInAchievements,
+  "profiles.blz":  renderBuiltInProfiles,
   "tunes.blz":     renderBuiltInTunes,
   "music.blz":     renderBuiltInTunes,
   "blizzstore.com": renderBuiltInBlizzStore,
@@ -63,13 +75,17 @@ const BUILT_IN_INDEX = [
   { domain: "stream.blz",  aliases: ["stream", "twitch", "live", "broadcast"],
     description: "Blizzard Streams — live broadcasts from users. Watch live or start your own stream (Twitch-style)." },
   { domain: "tunes.blz",   aliases: ["tunes", "music", "spotify", "podcast", "podcasts", "songs"],
-    description: "Blizzard Tunes — music and podcasts uploaded by users. Discover, listen, and make playlists (Spotify-style)." },
+    description: "Music — songs and podcasts uploaded by users. Discover, listen, and make playlists (Spotify-style)." },
   { domain: "ai.blz",      aliases: ["ai", "assistant", "chatbot"],
     description: "Blizzard AI — a smart assistant that recommends sites and answers questions about the Blizzard network." },
   { domain: "apis.blz",    aliases: ["apis", "api", "docs", "documentation", "voice", "video", "screen", "webrtc", "rtc"],
     description: "API reference — voice, video, screen-share, WebRTC peer-to-peer, and the bz site-data API. Code snippets for building Discord and Twitch clones." },
   { domain: "reports.blz", aliases: ["reports", "moderation", "flagged"],
-    description: "Site reports — view sites the community has flagged for review." }
+    description: "Site reports — view sites the community has flagged for review." },
+  { domain: "achievements.blz", aliases: ["achievements", "badges", "points", "profile badges"],
+    description: "Achievements - browse Blizzard badges, points, and unlock rules." },
+  { domain: "profiles.blz", aliases: ["profiles", "profile", "users", "badges"],
+    description: "Profiles - view users, bios, published sites, and achievements." }
 ];
 
 function builtInsAsSites() {
@@ -103,7 +119,21 @@ if (!window.__bzApiHooked) {
         "data.get":    () => siteDataGet(effective.domain, args[0]),
         "data.set":    () => siteDataSet(effective.domain, args[0], args[1]),
         "data.push":   () => siteDataPush(effective.domain, args[0], args[1]),
-        "data.list":   () => siteDataList(effective.domain, args[0])
+        "data.list":   () => siteDataList(effective.domain, args[0]),
+        "multiplayer.join": async () => {
+          const joined = await joinMultiplayerRoom(effective.user, args[0] || {}, effective.domain);
+          const sessionId = "mp" + (nextMultiplayerSession++);
+          multiplayerSessions.set(sessionId, { ...joined.session, source: e.source });
+          return { ...joined.publicRoom, sessionId };
+        },
+        "multiplayer.set": () => setRoomState(requireMultiplayerSession(args[0], e.source), args[1], args[2]),
+        "multiplayer.get": () => getRoomState(requireMultiplayerSession(args[0], e.source), args[1]),
+        "multiplayer.emit": () => emitRoomEvent(requireMultiplayerSession(args[0], e.source), args[1], args[2]),
+        "multiplayer.leave": async () => {
+          const session = requireMultiplayerSession(args[0], e.source);
+          await leaveMultiplayerRoom(session);
+          multiplayerSessions.delete(args[0]);
+        }
       };
       const h = handlers[fn];
       if (!h) return reply({ error: `Unknown API: ${fn}` });
@@ -116,6 +146,7 @@ if (!window.__bzApiHooked) {
 
   // Live subscribe handler (uses event push messages instead of req/res)
   window.__bzSubs = new Map();
+  window.__bzMpSubs = new Map();
   window.addEventListener("message", (e) => {
     const msg = e.data;
     if (!msg || msg.__bz !== "subscribe") return;
@@ -134,8 +165,39 @@ if (!window.__bzApiHooked) {
     const u = m?.get(msg.subId);
     if (u) { u(); m.delete(msg.subId); }
   });
+  window.addEventListener("message", (e) => {
+    const msg = e.data;
+    if (!msg || (msg.__bz !== "mp-subscribe" && msg.__bz !== "mp-event-subscribe")) return;
+    try {
+      const session = requireMultiplayerSession(msg.sessionId, e.source);
+      const unsub = msg.__bz === "mp-subscribe"
+        ? subscribeRoomState(session, msg.key, (value) => {
+            e.source?.postMessage({ __bz: "mp-evt", subId: msg.subId, value }, "*");
+          })
+        : subscribeRoomEvents(session, msg.type, (value) => {
+            e.source?.postMessage({ __bz: "mp-evt", subId: msg.subId, value }, "*");
+          });
+      if (!window.__bzMpSubs.has(e.source)) window.__bzMpSubs.set(e.source, new Map());
+      window.__bzMpSubs.get(e.source).set(msg.subId, unsub);
+    } catch (err) {
+      e.source?.postMessage({ __bz: "mp-evt", subId: msg.subId, error: String(err?.message || err) }, "*");
+    }
+  });
+  window.addEventListener("message", (e) => {
+    const msg = e.data;
+    if (!msg || msg.__bz !== "mp-unsubscribe") return;
+    const m = window.__bzMpSubs.get(e.source);
+    const u = m?.get(msg.subId);
+    if (u) { u(); m.delete(msg.subId); }
+  });
 
   window.__bzSourceCtx = new WeakMap();
+}
+
+function requireMultiplayerSession(sessionId, source) {
+  const session = multiplayerSessions.get(sessionId);
+  if (!session || session.source !== source) throw new Error("Multiplayer room not joined.");
+  return session;
 }
 
 export async function mountBrowser(root, ctx) {
@@ -821,7 +883,19 @@ export async function mountBrowser(root, ctx) {
     tabs.push(tab);
     setActive(tab.id);
     renderTabs();
-    frameEl.innerHTML = `<iframe sandbox="allow-scripts allow-forms allow-same-origin" srcdoc="${escapeAttr(html)}" allowfullscreen></iframe>`;
+    const withClient = injectBzClient(html);
+    frameEl.innerHTML = `<iframe sandbox="allow-scripts allow-forms allow-same-origin" srcdoc="${escapeAttr(withClient)}" allowfullscreen></iframe>`;
+    const iframe = frameEl.querySelector("iframe");
+    iframe.addEventListener("load", () => {
+      try {
+        if (iframe.contentWindow) {
+          window.__bzSourceCtx.set(iframe.contentWindow, {
+            user: ctx.user,
+            domain: "_local_" + String(title || "game").toLowerCase().replace(/[^a-z0-9_-]/g, "-")
+          });
+        }
+      } catch {}
+    });
     urlInput.value = "(local) " + title;
     persistTabs();
   }
@@ -838,6 +912,7 @@ export async function mountBrowser(root, ctx) {
 // Built-in URL handlers ------------------------------------------------------
 async function renderBuiltInTube(container, ctx, navigate, tab, setTitle) {
   setTitle(tab, "BlizzTube");
+  if (isAppBanned(ctx, ["tube", "tubes", "blizztube"])) return renderAppBan(container, "BlizzTube");
   container.innerHTML = "";
   const host = document.createElement("div");
   host.style.cssText = "width:100%;height:100%;display:flex;flex-direction:column;flex:1;min-height:0";
@@ -851,6 +926,7 @@ async function renderBuiltInStore(container, ctx, navigate, tab, setTitle) {
 }
 async function renderBuiltInStream(container, ctx, navigate, tab, setTitle, route) {
   setTitle(tab, "Blizzard Streams");
+  if (isAppBanned(ctx, ["stream", "livestream"])) return renderAppBan(container, "Streams");
   container.innerHTML = "";
   // Path of form "/@username" → open that streamer's channel directly.
   const m = (route?.path || "").match(/^\/+@?([a-zA-Z0-9_]{3,20})\b/);
@@ -874,13 +950,37 @@ async function renderBuiltInReports(container, ctx, navigate, tab, setTitle) {
   container.innerHTML = "";
   await renderReportsPage(container, ctx, navigate);
 }
+async function renderBuiltInMod(container, ctx, navigate, tab, setTitle) {
+  setTitle(tab, "Mod Queue");
+  container.innerHTML = "";
+  await mountMod(container, ctx);
+}
+async function renderBuiltInAchievements(container, ctx, navigate, tab, setTitle) {
+  setTitle(tab, "Achievements");
+  container.innerHTML = "";
+  await renderAchievementsPage(container, ctx);
+}
+async function renderBuiltInProfiles(container, ctx, navigate, tab, setTitle) {
+  setTitle(tab, "Profiles");
+  container.innerHTML = "";
+  await mountProfiles(container, ctx);
+}
 async function renderBuiltInTunes(container, ctx, navigate, tab, setTitle) {
-  setTitle(tab, "Blizzard Tunes");
+  setTitle(tab, "Music");
+  if (isAppBanned(ctx, ["tunes", "music"])) return renderAppBan(container, "Music");
   container.innerHTML = "";
   const host = document.createElement("div");
   host.style.cssText = "width:100%;height:100%;display:flex";
   container.appendChild(host);
   await renderTunes(host, ctx);
+}
+
+function isAppBanned(ctx, ids) {
+  return ids.some((id) => ctx.user?.appBans?.[id]);
+}
+
+function renderAppBan(container, name) {
+  container.innerHTML = `<div class="center muted" style="height:100%;padding:24px;text-align:center">You cannot open ${escapeHtml(name)} because this account is banned from that app.</div>`;
 }
 async function renderBuiltInBlizzStore(container, ctx, navigate, tab, setTitle, route) {
   setTitle(tab, "Blizz Web Store");
@@ -923,6 +1023,9 @@ function injectBzClient(html) {
     } else if (m.__bz === "evt") {
       const cb = subs.get(m.subId);
       if (cb) cb(m.value);
+    } else if (m.__bz === "mp-evt") {
+      const cb = subs.get(m.subId);
+      if (cb && !m.error) cb(m.value);
     }
   });
   function call(fn, args) {
@@ -947,6 +1050,41 @@ function injectBzClient(html) {
           subs.delete(subId);
           parent.postMessage({ __bz: "unsubscribe", subId }, "*");
         };
+      }
+    },
+    multiplayer: {
+      join: async (opts) => {
+        const info = await call("multiplayer.join", [opts || {}]);
+        const sessionId = info.sessionId;
+        const room = {
+          id: info.id,
+          hostUid: info.hostUid,
+          players: info.players || [],
+          iAm: info.iAm,
+          set: (key, value) => call("multiplayer.set", [sessionId, key, value]),
+          get: (key) => call("multiplayer.get", [sessionId, key]),
+          emit: (type, data) => call("multiplayer.emit", [sessionId, type, data]),
+          leave: () => call("multiplayer.leave", [sessionId]),
+          onUpdate: (key, cb) => {
+            const subId = nextSub++;
+            subs.set(subId, cb);
+            parent.postMessage({ __bz: "mp-subscribe", subId, sessionId, key }, "*");
+            return () => {
+              subs.delete(subId);
+              parent.postMessage({ __bz: "mp-unsubscribe", subId }, "*");
+            };
+          },
+          onEvent: (type, cb) => {
+            const subId = nextSub++;
+            subs.set(subId, cb);
+            parent.postMessage({ __bz: "mp-event-subscribe", subId, sessionId, type }, "*");
+            return () => {
+              subs.delete(subId);
+              parent.postMessage({ __bz: "mp-unsubscribe", subId }, "*");
+            };
+          }
+        };
+        return room;
       }
     }
   };

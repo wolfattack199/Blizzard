@@ -107,7 +107,7 @@ export async function mountTube(root, ctx) {
       if (!blob) {
         frameEl.innerHTML = `<div style="padding:30px;color:#fff;text-align:center">Video unavailable.</div>`;
       } else {
-        frameEl.innerHTML = `<video src="${escapeHtml(blob)}" controls autoplay></video>`;
+        frameEl.innerHTML = `<video src="${escapeHtml(blob)}" controls autoplay playsinline preload="metadata"></video>`;
       }
     } else {
       // Legacy URL-based entry
@@ -118,8 +118,10 @@ export async function mountTube(root, ctx) {
     const ci = stage.querySelector('[data-bind="ci"]');
 
     const unsub = subscribeTubeComments(id, (c) => {
+      if (c.hidden) return;
       const node = document.createElement("div");
-      node.className = "tube-comment";
+      node.className = "tube-comment" + (c.moderation?.status === "review" ? " under-review" : "");
+      node.title = c.moderation?.status === "review" ? "Under review" : "";
       node.innerHTML = `
         <div class="tube-comment-avatar">${escapeHtml((c.username || "?")[0].toUpperCase())}</div>
         <div class="tube-comment-body">
@@ -146,11 +148,15 @@ export async function mountTube(root, ctx) {
       })
     );
 
-    const send = () => {
+    const send = async () => {
       const t = ci.value.trim();
       if (!t) return;
-      addTubeComment(id, ctx.user.uid, ctx.user.username, t);
-      ci.value = "";
+      try {
+        await addTubeComment(id, ctx.user.uid, ctx.user.username, t);
+        ci.value = "";
+      } catch (e) {
+        alert(e.message || "Comment could not be sent.");
+      }
     };
     stage.querySelector('[data-act="send"]').onclick = send;
     ci.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
@@ -179,7 +185,7 @@ function renderLegacyPlayer(v) {
   const yt = parseYouTube(v.url || "");
   if (yt) return `<iframe src="https://www.youtube.com/embed/${escapeHtml(yt)}" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>`;
   if (/\.(mp4|webm|ogg|mov)(\?|$)/i.test(v.url || "")) {
-    return `<video src="${escapeHtml(v.url)}" controls preload="metadata"></video>`;
+    return `<video src="${escapeHtml(v.url)}" controls playsinline preload="metadata"></video>`;
   }
   const vimeo = (v.url || "").match(/vimeo\.com\/(\d+)/);
   if (vimeo) return `<iframe src="https://player.vimeo.com/video/${escapeHtml(vimeo[1])}" allowfullscreen></iframe>`;
@@ -253,7 +259,7 @@ function openUploadDialog(ctx, onDone) {
   fileInput.addEventListener("change", async () => {
     const f = fileInput.files?.[0];
     if (!f) return;
-    if (!f.type.startsWith("video/")) { alert("Please pick a video file."); return; }
+    if (!isAcceptedVideo(f)) { alert("Please pick a .mp4, .webm, .ogg, or .mov video file."); return; }
     if (f.size > TUBE_MAX_BYTES) {
       alert(`File too large (${(f.size/1024/1024).toFixed(1)} MB). Max is ${TUBE_MAX_BYTES/1024/1024} MB.`);
       return;
@@ -320,4 +326,9 @@ function openUploadDialog(ctx, onDone) {
       progressBox.style.display = "none";
     }
   };
+}
+
+function isAcceptedVideo(file) {
+  const name = (file?.name || "").toLowerCase();
+  return file?.type?.startsWith("video/") || /\.(mp4|webm|ogg|mov)$/i.test(name);
 }

@@ -1,5 +1,6 @@
 // Profiles — browse users, view their profile + published sites, edit own bio + avatar.
 import { listUsers, loadUser, listSites, updateProfile } from "../firebase.js";
+import { getAchievementsCatalog } from "../achievements.js";
 import { escapeHtml } from "../os/wm.js";
 import { avatarHtml, resizeImageToDataURL, avatarColor as colorFor } from "../os/avatar.js";
 
@@ -47,18 +48,22 @@ export async function mountProfiles(root, ctx) {
     const sites = allSites.filter((s) => s.owner === uid);
     const isMe = uid === ctx.user.uid;
     const av = avatarHtml(u);
+    const catalog = await getAchievementsCatalog();
+    const achievementsHtml = renderAchievements(u, catalog, isMe);
 
     detail.innerHTML = `
       <div class="profiles-detail-header">
-        <div class="profile-avatar" style="${av.style};position:relative">
-          ${escapeHtml(av.text)}
-          ${isMe ? `<input type="file" accept="image/*" data-bind="av-upload" style="position:absolute;inset:0;opacity:0;cursor:pointer;border-radius:50%"
-                     title="Change profile picture">` : ""}
-        </div>
+        <div class="profile-avatar" style="${av.style}">${escapeHtml(av.text)}</div>
         <div>
           <h2>@${escapeHtml(u.username || "anon")}</h2>
           <div class="muted">Joined ${u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</div>
-          ${isMe ? `<div class="muted" style="font-size:11px;margin-top:4px">Click your avatar to upload a picture · <button data-act="av-remove" style="padding:1px 6px;font-size:10.5px${u.profile?.avatarUrl ? "" : ";display:none"}">Remove</button></div>` : ""}
+          ${isMe ? `
+            <input type="file" accept="image/*" data-bind="av-upload" style="display:none">
+            <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+              <button data-act="av-pick" style="padding:3px 9px;font-size:11.5px">Change picture</button>
+              <button data-act="av-remove" style="padding:3px 9px;font-size:11.5px${u.profile?.avatarUrl ? "" : ";display:none"}">Remove</button>
+            </div>
+          ` : ""}
         </div>
       </div>
 
@@ -77,6 +82,8 @@ export async function mountProfiles(root, ctx) {
           <div style="margin-top:14px"><button data-act="dm">Message @${escapeHtml(u.username)}</button></div>
         </div>
       `}
+
+      ${achievementsHtml}
 
       <div class="sites-block">
         <label class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Published sites</label>
@@ -100,6 +107,8 @@ export async function mountProfiles(root, ctx) {
         setTimeout(() => { status.textContent = ""; }, 1500);
       };
       const upload = detail.querySelector('[data-bind="av-upload"]');
+      const pickBtn = detail.querySelector('[data-act="av-pick"]');
+      if (pickBtn && upload) pickBtn.onclick = () => upload.click();
       if (upload) upload.onchange = async (e) => {
         const f = e.target.files?.[0];
         if (!f) return;
@@ -148,4 +157,46 @@ export async function mountProfiles(root, ctx) {
   // Auto-select current user
   const me = listEl.querySelector(`[data-uid="${ctx.user.uid}"]`);
   if (me) { me.classList.add("active"); renderProfile(ctx.user.uid); }
+}
+
+function renderAchievements(user, catalog, isMe) {
+  const all = Object.values(catalog || {});
+  const unlocked = user.achievements || {};
+  const hideLocked = user.profile?.hideAchievementProgress && !isMe;
+  const visible = hideLocked ? all.filter((a) => unlocked[a.id]) : all;
+  const unlockedCount = all.filter((a) => unlocked[a.id]).length;
+  return `
+    <div class="profile-achievements">
+      <div class="profile-achievements-head">
+        <label class="muted">Achievements</label>
+        <span>${Number(user.points) || 0} points · ${unlockedCount} of ${all.length}</span>
+      </div>
+      <div class="profile-achievement-grid">
+        ${visible.map((a) => {
+          const row = unlocked[a.id];
+          const when = row?.unlockedAt ? new Date(row.unlockedAt).toLocaleDateString() : "";
+          const title = row
+            ? `${a.name} - ${a.description}${when ? " - unlocked " + when : ""}`
+            : `${a.name} - How to unlock: ${unlockHint(a)}`;
+          return `
+            <div class="profile-achievement ${row ? "" : "locked"} tier-${escapeHtml(a.tier || "bronze")}" title="${escapeHtml(title)}">
+              <div class="profile-achievement-glyph">${escapeHtml(a.glyph || "*")}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function unlockHint(a) {
+  const trigger = a.trigger || {};
+  if (trigger.type === "counter") {
+    return `${prettyCounter(trigger.key)} ${trigger.threshold || 1} time${trigger.threshold === 1 ? "" : "s"}`;
+  }
+  return a.description || "Keep using Blizzard";
+}
+
+function prettyCounter(key = "") {
+  return String(key).replace(/_/g, " ");
 }

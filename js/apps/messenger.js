@@ -17,15 +17,29 @@ import { pickUser } from "../os/userpicker.js";
 import { openMailCompose } from "./inbox.js";
 
 // Cache of users for avatar lookups in the message stream
+// User cache for avatar/profile lookups in the message stream. We store a
+// { value, fetchedAt } record and re-fetch after 30s so updated avatars
+// propagate. Null/failed lookups are NOT cached, so a transient network glitch
+// can't poison the avatar for the rest of the session.
 const userCache = new Map();
+const USER_TTL_MS = 30_000;
 async function getCachedUser(uid) {
   if (!uid) return null;
-  if (userCache.has(uid)) return userCache.get(uid);
-  const p = loadUser(uid);
-  userCache.set(uid, p);
-  const v = await p;
-  userCache.set(uid, v);
-  return v;
+  const hit = userCache.get(uid);
+  if (hit && Date.now() - hit.fetchedAt < USER_TTL_MS) {
+    return hit.value instanceof Promise ? await hit.value : hit.value;
+  }
+  const p = loadUser(uid).then((v) => {
+    if (v) userCache.set(uid, { value: v, fetchedAt: Date.now() });
+    else userCache.delete(uid);
+    return v;
+  }).catch(() => { userCache.delete(uid); return null; });
+  userCache.set(uid, { value: p, fetchedAt: Date.now() });
+  return await p;
+}
+// Exported so the Users app can nuke a cache entry after a profile update.
+export function invalidateUserCache(uid) {
+  if (uid) userCache.delete(uid);
 }
 
 export async function mountMessenger(root, ctx) {
@@ -246,14 +260,18 @@ export async function mountMessenger(root, ctx) {
 
   function clearMessages() { messages.innerHTML = ""; }
   function appendMessage(m) {
+    if (m.hidden) return;
     const div = document.createElement("div");
-    div.className = "msgr-msg";
+    div.className = "msgr-msg" + (m.moderation?.status === "review" ? " under-review" : "");
+    div.title = m.moderation?.status === "review" ? "Under review" : "";
     const av = avatarHtml({ uid: m.uid, username: m.username });
     div.innerHTML = `
       <div class="msgr-avatar" style="${av.style}">${escapeHtml(av.text)}</div>
       <div class="msgr-msg-body">
         <div class="msgr-msg-head">
           <span class="msgr-msg-user">${escapeHtml(m.username || "unknown")}</span>
+          <span class="pill msgr-role-pill hidden" data-bind="role-pill"></span>
+          ${m.moderation?.status === "review" ? '<span class="pill">Under review</span>' : ""}
           <span class="msgr-msg-time">${formatTime(m.ts)}</span>
         </div>
         <div class="msgr-msg-text">${linkify(escapeHtml(m.text || ""))}</div>
@@ -271,8 +289,14 @@ export async function mountMessenger(root, ctx) {
           el.setAttribute("style", a2.style);
           el.textContent = a2.text;
         }
+        const pill = div.querySelector('[data-bind="role-pill"]');
+        if (pill && (u.role === "mod" || u.role === "admin")) {
+          pill.textContent = u.role === "admin" ? "ADMIN" : "MOD";
+          pill.classList.remove("hidden");
+        }
       });
     }
+    maybeNotifyMention(m);
   }
 
   function switchToChannel(id, label) {
@@ -287,7 +311,13 @@ export async function mountMessenger(root, ctx) {
 
   function switchToDM(uid, username) {
     currentView = { kind: "dm", uid, username };
-    chanTitle.textContent = "@ " + username;
+    // Header gets a "📞 Call" button next to the @name so the user can
+    // place a voice call from inside the DM.
+    chanTitle.innerHTML = `<span>@ ${escapeHtml(username)}</span>
+      <button class="msgr-call-btn" data-act="call" title="Voice call @${escapeHtml(username)}">📞 Call</button>`;
+    chanTitle.querySelector('[data-act="call"]').onclick = () => {
+      if (window.bzPlaceCall) window.bzPlaceCall({ uid, username });
+    };
     clearMessages();
     if (unsubMessages) unsubMessages();
     unsubMessages = subscribeDM(ctx.user.uid, uid, appendMessage);
@@ -319,18 +349,40 @@ export async function mountMessenger(root, ctx) {
       e.preventDefault();
       const text = inputEl.value.trim();
       if (!text) return;
-      if (currentView.kind === "channel") {
-        sendChannelMessage(currentView.id, ctx.user.uid, ctx.user.username, text);
-      } else if (currentView.kind === "dm") {
-        sendDM(ctx.user.uid, currentView.uid, ctx.user.uid, ctx.user.username, text);
-      } else if (currentView.kind === "server") {
-        sendServerMessage(currentView.serverId, currentView.channelId, ctx.user.uid, ctx.user.username, text);
-      } else if (currentView.kind === "mail" && currentView.mailSend) {
-        currentView.mailSend(text);
-      } else return;
+      sendCurrentMessage(text).catch((err) => alert(err.message || "Message could not be sent."));
       inputEl.value = "";
     }
   });
+
+  async function sendCurrentMessage(text) {
+    if (currentView.kind === "channel") {
+      await sendChannelMessage(currentView.id, ctx.user.uid, ctx.user.username, text);
+    } else if (currentView.kind === "dm") {
+      await sendDM(ctx.user.uid, currentView.uid, ctx.user.uid, ctx.user.username, text);
+    } else if (currentView.kind === "server") {
+      await sendServerMessage(currentView.serverId, currentView.channelId, ctx.user.uid, ctx.user.username, text);
+    } else if (currentView.kind === "mail" && currentView.mailSend) {
+      await currentView.mailSend(text);
+    }
+  }
+
+  function maybeNotifyMention(m) {
+    if (!m?.text || m.uid === ctx.user.uid) return;
+    if (m.ts && Date.now() - m.ts > 30000) return;
+    const mine = ctx.user.username || "";
+    const nameMatch = new RegExp(`@${escRe(mine)}\\b`, "i").test(m.text || "");
+    const groupMatch = currentView.kind === "server" && /@(everyone|here)\b/i.test(m.text || "");
+    if (!nameMatch && !groupMatch) return;
+    document.dispatchEvent(new CustomEvent("blizzard:mention", {
+      detail: {
+        senderUid: m.uid,
+        senderUsername: m.username,
+        text: m.text,
+        context: currentView.kind === "dm" ? "DM" : "#" + (currentView.label || currentView.id || "chat"),
+        appId: "messenger"
+      }
+    }));
+  }
 
   function renderInboxThreads(box) {
     if (inboxThreads.length === 0) {
@@ -418,6 +470,10 @@ function formatTime(ts) {
 
 function linkify(s) {
   return s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+function escRe(s) {
+  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function dmRowHtml(u) {

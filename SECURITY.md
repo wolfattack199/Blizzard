@@ -24,7 +24,48 @@ test-mode rules with something like the policy below, and click Publish.
     "users": {
       ".read": "auth != null",
       "$uid": {
-        ".write": "auth.uid === $uid"
+        ".write": "auth.uid === $uid && (!data.exists() || (newData.child('role').val() === data.child('role').val() && newData.child('banned').val() === data.child('banned').val() && newData.child('timeout').val() === data.child('timeout').val() && newData.child('appBans').val() === data.child('appBans').val() && newData.child('quota_tier').val() === data.child('quota_tier').val()))",
+        "role": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "banned": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "timeout": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "appBans": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "quota_tier": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "storage_used": {
+          ".write": "$uid === auth.uid"
+        },
+        "storage_breakdown": {
+          ".write": "$uid === auth.uid"
+        },
+        "storage_backfilledAt": {
+          ".write": "$uid === auth.uid"
+        },
+        "counters": {
+          ".write": "$uid === auth.uid"
+        },
+        "achievements": {
+          ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "points": {
+          ".write": "$uid === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        },
+        "warnings": {
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'mod')",
+          "$warning": {
+            "acknowledgedAt": {
+              ".write": "$uid === auth.uid"
+            }
+          }
+        }
       }
     },
     "usernames": {
@@ -48,6 +89,11 @@ test-mode rules with something like the policy below, and click Publish.
       }
     },
     "games":    { ".read": "auth != null", ".write": "auth != null" },
+    "game_rooms": { ".read": "auth != null", ".write": "auth != null" },
+    "achievements_catalog": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+    },
     "tubes":    { ".read": "auth != null", ".write": "auth != null" },
     "tunes":    { ".read": "auth != null", ".write": "auth != null" },
     "tube-blobs": { ".read": "auth != null", ".write": "auth != null" },
@@ -114,7 +160,31 @@ test-mode rules with something like the policy below, and click Publish.
     "siteData": { ".read": "auth != null", ".write": "auth != null" },
     "reports":  { ".read": "auth != null", ".write": "auth != null" },
     "servers":  { ".read": "auth != null", ".write": "auth != null" },
-    "serverMessages": { ".read": "auth != null", ".write": "auth != null" }
+    "serverMessages": { ".read": "auth != null", ".write": "auth != null" },
+    "admin_audit_log": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+      "$entry": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && !data.exists()"
+      }
+    },
+    "mod_audit_log": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'mod')",
+      "$entry": {
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'mod') && !data.exists()"
+      }
+    },
+    "mod_queue": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'mod')",
+      ".write": "auth != null"
+    },
+    "admin_alerts": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+      ".write": "auth != null"
+    },
+    "moderation": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+    }
   }
 }
 ```

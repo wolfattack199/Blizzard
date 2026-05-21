@@ -25,6 +25,7 @@ export async function mountLivestream(root, ctx) {
         <span class="grow"></span>
         <button data-act="kill-old" title="End any of my old streams left running" style="padding:3px 9px;font-size:11px">End all my old streams</button>
         <span class="muted" data-bind="status" style="font-size:12px;margin-left:10px">Idle</span>
+        <span class="muted" data-bind="health" style="font-size:11px;margin-left:10px">No peers</span>
       </div>
       <div class="obs-preview" data-bind="preview-pane">
         <video data-bind="preview" autoplay muted playsinline></video>
@@ -93,6 +94,7 @@ export async function mountLivestream(root, ctx) {
   const goBtn     = root.querySelector('[data-act="go"]');
   const stopBtn   = root.querySelector('[data-act="stop"]');
   const status    = root.querySelector('[data-bind="status"]');
+  const healthEl  = root.querySelector('[data-bind="health"]');
   const viewersEl = root.querySelector('[data-bind="viewers"]');
   const micBar    = root.querySelector('[data-bind="mic-bar"]');
   const micGain   = root.querySelector('[data-bind="mic-gain"]');
@@ -109,6 +111,7 @@ export async function mountLivestream(root, ctx) {
   let mediaRecorder = null;
   let recChunks = [];
   let recStartTs = 0;
+  let healthTimer = null;
   const recCb = root.querySelector('[data-bind="record"]');
   const recStatus = root.querySelector('[data-bind="rec-status"]');
 
@@ -183,6 +186,7 @@ export async function mountLivestream(root, ctx) {
     // Auto-shutdown if this tab disconnects without clicking Stop.
     registerStreamOnDisconnect(activeStreamId);
     status.textContent = "🔴 Live as blizz://stream.blz → @" + ctx.user.username;
+    startHealthPolling();
     goBtn.disabled = true;
     stopBtn.disabled = false;
     chatIn.disabled = false;
@@ -236,37 +240,39 @@ export async function mountLivestream(root, ctx) {
       activeMedia.getTracks().forEach((t) => pc.addTrack(t, activeMedia));
 
       pc.onicecandidate = (ev) => {
-        if (ev.candidate) rtdbPush(`streams/${activeStreamId}/ice/host/${key}`, ev.candidate.toJSON());
+        if (ev.candidate) rtdbPush(`streams/${activeStreamId}/ice/host/${key}`, serializeIceCandidate(ev.candidate));
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           peerConnections.delete(key);
           updateViewerCount();
         }
+        renderHealth();
       };
 
       const unsubAns = rtdbOn(`streams/${activeStreamId}/offers/${key}/answer`, "value", async (ans) => {
         if (!ans) return;
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(ans));
+          await pc.setRemoteDescription(new RTCSessionDescription(normalizeSessionDescription(ans)));
           entry.remoteSet = true;
           // Flush any queued ICE
           for (const c of entry.pendingIce) {
-            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+            try { await pc.addIceCandidate(new RTCIceCandidate(normalizeIceCandidate(c))); } catch {}
           }
           entry.pendingIce.length = 0;
+          renderHealth();
         } catch {}
       });
       const unsubIce = rtdbOn(`streams/${activeStreamId}/ice/viewer/${key}`, "child_added", ({ val }) => {
         if (!entry.remoteSet) { entry.pendingIce.push(val); return; }
-        pc.addIceCandidate(new RTCIceCandidate(val)).catch(() => {});
+        pc.addIceCandidate(new RTCIceCandidate(normalizeIceCandidate(val))).catch(() => {});
       });
       unsubs.push(unsubAns, unsubIce);
 
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await rtdbSet(`streams/${activeStreamId}/offers/${key}/offer`, offer.toJSON());
+        await rtdbSet(`streams/${activeStreamId}/offers/${key}/offer`, serializeSessionDescription(pc.localDescription || offer));
       } catch (e) {
         console.warn("Offer creation failed:", e);
       }
@@ -287,6 +293,7 @@ export async function mountLivestream(root, ctx) {
     chatIn.disabled = true;
     chatSend.disabled = true;
     status.textContent = "Idle";
+    stopHealthPolling();
     await finalizeRecording();
   };
 
@@ -341,6 +348,43 @@ export async function mountLivestream(root, ctx) {
     const n = peerConnections.size;
     viewersEl.textContent = n + " watching";
     if (activeStreamId) setStreamViewers(activeStreamId, n).catch(() => {});
+    renderHealth();
+  }
+
+  function startHealthPolling() {
+    stopHealthPolling();
+    renderHealth();
+    healthTimer = setInterval(renderHealth, 2000);
+  }
+
+  function stopHealthPolling() {
+    if (healthTimer) clearInterval(healthTimer);
+    healthTimer = null;
+    if (healthEl) healthEl.textContent = "No peers";
+  }
+
+  async function renderHealth() {
+    if (!healthEl) return;
+    const entries = [...peerConnections.values()];
+    if (entries.length === 0) {
+      healthEl.textContent = activeStreamId ? "Waiting for viewers" : "No peers";
+      return;
+    }
+    const states = entries.map(({ pc }) => pc.connectionState || pc.iceConnectionState || "new");
+    let frames = 0;
+    let dropped = 0;
+    for (const { pc } of entries) {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((row) => {
+          if (row.type === "outbound-rtp" && row.kind === "video") {
+            frames += row.framesEncoded || row.framesSent || 0;
+            dropped += row.framesDropped || 0;
+          }
+        });
+      } catch {}
+    }
+    healthEl.textContent = `${states.join(", ")} · ${entries.length} peer${entries.length === 1 ? "" : "s"} · ${dropped}/${frames || 0} dropped`;
   }
 
   // Chat
@@ -369,8 +413,8 @@ export async function mountLivestream(root, ctx) {
       chatOverlay.appendChild(ovl);
       // Keep only the last 6 visible.
       while (chatOverlay.children.length > 6) chatOverlay.firstElementChild.remove();
-      setTimeout(() => { ovl.style.opacity = "0"; ovl.style.transition = "opacity 0.8s"; }, 9000);
-      setTimeout(() => { ovl.remove(); }, 10000);
+      setTimeout(() => { ovl.style.opacity = "0"; ovl.style.transition = "opacity 0.8s"; }, 19200);
+      setTimeout(() => { ovl.remove(); }, 20000);
     }
   }
   function send() {
@@ -397,6 +441,7 @@ export async function mountLivestream(root, ctx) {
   return () => {
     // Window is closing — make sure we tear down the broadcast cleanly.
     if (meterRaf) cancelAnimationFrame(meterRaf);
+    stopHealthPolling();
     if (audioCtx) { try { audioCtx.close(); } catch {} }
     // End the live stream right away so other users stop seeing us as live.
     if (activeStreamId) endStream(activeStreamId).catch(() => {});
@@ -431,4 +476,35 @@ async function captureBlizzardTab() {
   }
 
   return stream;
+}
+
+function serializeSessionDescription(desc) {
+  if (!desc) return null;
+  if (typeof desc.toJSON === "function") return desc.toJSON();
+  return { type: desc.type, sdp: desc.sdp };
+}
+
+function normalizeSessionDescription(desc) {
+  return { type: desc?.type, sdp: desc?.sdp };
+}
+
+function serializeIceCandidate(candidate) {
+  if (!candidate) return null;
+  if (typeof candidate.toJSON === "function") return candidate.toJSON();
+  const out = {
+    candidate: candidate.candidate,
+    sdpMid: candidate.sdpMid,
+    sdpMLineIndex: candidate.sdpMLineIndex
+  };
+  if (candidate.usernameFragment != null) out.usernameFragment = candidate.usernameFragment;
+  return out;
+}
+
+function normalizeIceCandidate(candidate) {
+  return {
+    candidate: candidate?.candidate,
+    sdpMid: candidate?.sdpMid ?? null,
+    sdpMLineIndex: candidate?.sdpMLineIndex ?? null,
+    usernameFragment: candidate?.usernameFragment
+  };
 }

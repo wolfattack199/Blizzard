@@ -157,6 +157,16 @@ const COMMANDS = {
     dim("  api install <name>            add an API starter (voice|video|screen|rtc|chat|stream)");
   },
   whoami: async (_, { print, ctx }) => print(ctx.user.username),
+  // Owner-only secret: opens the Admin Console. Hidden from `help`. To anyone
+  // else, this looks like an unknown command — they can't even tell it exists.
+  ghiy: async (_, { ok, err, ctx }) => {
+    if ((ctx.user.username || "").toLowerCase() !== "wolfattack199") {
+      err("blizzard: command not found: ghiy");
+      return;
+    }
+    ctx.launchApp("admin");
+    ok("Opening Admin Console...");
+  },
   pwd: async (_, { print, getCwd }) => print(getCwd()),
   echo: async (args, { print }) => print(args.join(" ")),
   clear: async () => { document.querySelector(".terminal-output").innerHTML = ""; },

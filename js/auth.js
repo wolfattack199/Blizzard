@@ -249,7 +249,13 @@ export function watchAuth(callback) {
       uid: user.uid,
       email: user.email,
       username: profile?.username || (user.email || "").split("@")[0],
-      profile: profile?.profile || {}
+      profile: profile?.profile || {},
+      role: profile?.role || "user",
+      banned: !!profile?.banned,
+      timeout: profile?.timeout || null,
+      appBans: profile?.appBans || {},
+      warnings: profile?.warnings || {},
+      status: profile?.status || "online"
     };
 
     rememberUser(signedInUser);

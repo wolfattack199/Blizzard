@@ -23,6 +23,9 @@ export async function mountEngine(root, ctx) {
         <button data-act="run">▶ Run</button>
         <button data-act="edit" disabled>✎ Edit</button>
         <button class="primary" data-act="publish">⬆ Publish to Community Hub</button>
+        <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:12px">
+          <input type="checkbox" data-bind="multiplayer"> Multiplayer
+        </label>
         <span class="grow"></span>
         <span class="muted" data-bind="status" style="font-size:12px"></span>
       </div>
@@ -54,12 +57,13 @@ export async function mountEngine(root, ctx) {
   const customImg  = root.querySelector('[data-bind="customImg"]');
   const inspector  = root.querySelector('[data-bind="inspector"]');
   const status     = root.querySelector('[data-bind="status"]');
+  const multiplayer = root.querySelector('[data-bind="multiplayer"]');
 
   let model = newScene();
   let selectedId = null;
   let mode = "edit"; // or "run"
 
-  function newScene() { return { name: "Untitled Scene", bg: "#1a2238", sprites: [] }; }
+  function newScene() { return { name: "Untitled Scene", bg: "#1a2238", multiplayer: false, sprites: [] }; }
   function uid() { return Math.random().toString(36).slice(2, 9); }
 
   palette.innerHTML = PALETTE.map((e) =>
@@ -77,6 +81,7 @@ export async function mountEngine(root, ctx) {
     customImg.value = "";
     render();
   };
+  multiplayer.onchange = () => { model.multiplayer = multiplayer.checked; };
 
   stage.addEventListener("dragover", (e) => e.preventDefault());
   stage.addEventListener("drop", (e) => {
@@ -98,6 +103,7 @@ export async function mountEngine(root, ctx) {
   });
 
   function render() {
+    multiplayer.checked = !!model.multiplayer;
     stage.style.background = model.bg;
     stage.innerHTML = model.sprites.map((s) => `
       <div data-id="${s.id}"
@@ -282,7 +288,8 @@ export async function mountEngine(root, ctx) {
     const html = exportGameHtml(model, title);
     try {
       await publishGame(ctx.user.uid, ctx.user.username, {
-        title, description, code: html, thumb: model.sprites[0]?.value || "🎮"
+        title, description, code: html, thumb: model.sprites[0]?.value || "🎮",
+        multiplayer: !!model.multiplayer
       });
       alert(`Published "${title}" to Community Hub.`);
     } catch (e) {
@@ -312,12 +319,20 @@ function exportGameHtml(model, title) {
     const model = ${data};
     const stage = document.getElementById('stage');
     const msg = document.getElementById('msg');
+    let mpRoom = null;
+    let remotePositions = {};
     function render() {
-      stage.innerHTML = model.sprites.map(s => {
+      const local = model.sprites.map(s => {
         const filter = s.role === 'goal' ? 'drop-shadow(0 0 8px gold)' : s.role === 'hazard' ? 'drop-shadow(0 0 8px #ff3344)' : s.role === 'player' ? 'drop-shadow(0 0 6px #5aa9ff)' : 'none';
         const inner = s.kind === 'image' ? '<img src="' + s.value + '">' : s.value;
         return '<div class="sprite" data-id="' + s.id + '" style="left:' + s.x + 'px;top:' + s.y + 'px;width:' + s.size + 'px;height:' + s.size + 'px;font-size:' + (s.size*0.8) + 'px;filter:' + filter + '">' + inner + '</div>';
       }).join('');
+      const remotes = Object.entries(remotePositions || {}).filter(([uid]) => !mpRoom || uid !== mpRoom.iAm.uid).map(([uid, p]) => {
+        const size = p.size || 48;
+        const inner = p.kind === 'image' ? '<img src="' + p.value + '">' : (p.value || '●');
+        return '<div class="sprite" data-remote="' + uid + '" style="left:' + (p.x || 0) + 'px;top:' + (p.y || 0) + 'px;width:' + size + 'px;height:' + size + 'px;font-size:' + (size*0.8) + 'px;filter:drop-shadow(0 0 6px #7cc7ff);opacity:.86">' + inner + '</div>';
+      }).join('');
+      stage.innerHTML = local + remotes;
     }
     const player = model.sprites.find(s => s.role === 'player');
     if (!player) { msg.textContent = 'No player set in editor.'; render(); }
@@ -352,10 +367,28 @@ function exportGameHtml(model, title) {
           }
         }
         render();
+        if (mpRoom) mpRoom.set('playerPositions/' + mpRoom.iAm.uid, {
+          x: player.x, y: player.y, size: player.size, kind: player.kind, value: player.value
+        }).catch(() => {});
         requestAnimationFrame(step);
       }
       render();
+      setupMultiplayer();
       requestAnimationFrame(step);
+    }
+    async function setupMultiplayer() {
+      if (!model.multiplayer || !window.bz?.multiplayer || !player) return;
+      try {
+        mpRoom = await window.bz.multiplayer.join({
+          gameId: ${JSON.stringify(title.toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 40) || "engine-game")},
+          roomId: window.__blizzardRoomCode || undefined,
+          maxPlayers: 4
+        });
+        msg.textContent = 'Room ' + mpRoom.id + ' · arrow keys to move';
+        mpRoom.onUpdate('playerPositions', positions => { remotePositions = positions || {}; render(); });
+      } catch (e) {
+        msg.textContent = 'Multiplayer unavailable: ' + e.message;
+      }
     }
   <\/script>
 </body></html>`;

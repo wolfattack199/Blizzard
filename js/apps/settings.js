@@ -1,5 +1,5 @@
 // Settings — profile, appearance, about, danger zone.
-import { auth, signOut, listUsers } from "../firebase.js";
+import { auth, signOut, listUsers, getStorageSummary, formatBytes, requestMoreStorage } from "../firebase.js";
 import * as FS from "../fs.js";
 import { escapeHtml } from "../os/wm.js";
 import { getAppearance, setAppearance, applyAppearance, APPEARANCE_PRESETS } from "../os/appearance.js";
@@ -144,12 +144,41 @@ export async function mountSettings(root, ctx) {
         <div class="muted" style="font-size: 12px; margin-top: 6px;">
           Removes downloaded apps, documents, and projects on this device. Your Blizzard account and published sites are kept.
         </div>`;
-      computeStorage().then((info) => {
+      Promise.all([getStorageSummary(ctx.user.uid), computeStorage()]).then(([cloud, local]) => {
         const target = content.querySelector('[data-bind="storage-info"]');
-        if (target) target.innerHTML = `
-          <div class="settings-row"><label>Files</label><span>${info.count}</span></div>
-          <div class="settings-row"><label>Approx size</label><span>${(info.bytes / 1024).toFixed(1)} KB</span></div>
+        if (!target) return;
+        const pct = cloud.quota > 0 ? Math.min(100, (cloud.used / cloud.quota) * 100) : 0;
+        const rows = [
+          ["Cloud files", cloud.breakdown.cloud],
+          ["BlizzTube", cloud.breakdown.tube],
+          ["Music", cloud.breakdown.tunes],
+          ["Sites", cloud.breakdown.sites],
+          ["Games", cloud.breakdown.games],
+          ["Apps", cloud.breakdown.apps],
+          ["Extensions", cloud.breakdown.extensions]
+        ];
+        target.innerHTML = `
+          <div class="storage-hero">
+            <div>
+              <div class="storage-big">${formatBytes(cloud.used)} of ${formatBytes(cloud.quota)} used</div>
+              <div class="muted">${formatBytes(cloud.free)} free · ${escapeHtml(cloud.tier)} tier</div>
+            </div>
+            <button data-act="request-space">Request more space</button>
+          </div>
+          <div class="storage-meter"><span style="width:${pct.toFixed(1)}%"></span></div>
+          <div class="storage-breakdown">
+            ${rows.map(([label, bytes]) => `
+              <div class="settings-row"><label>${escapeHtml(label)}</label><span>${formatBytes(bytes)}</span></div>
+            `).join("")}
+          </div>
+          <div class="settings-row"><label>Local files on this device</label><span>${local.count} · ${formatBytes(local.bytes)}</span></div>
         `;
+        target.querySelector('[data-act="request-space"]').onclick = async () => {
+          const message = prompt("Tell admins why you need more Blizzard storage:");
+          if (!message) return;
+          await requestMoreStorage(ctx.user.uid, ctx.user.username, message);
+          alert("Storage request sent to admins.");
+        };
       });
       content.querySelector('[data-act="erase"]').onclick = async () => {
         if (!confirm("Erase ALL local files on this device? This cannot be undone.")) return;
@@ -174,7 +203,9 @@ export async function mountSettings(root, ctx) {
     }
   }
 
-  renderTab("account");
+  const initialTab = ctx.initialTab || "account";
+  tabs.forEach((x) => x.classList.toggle("active", x.dataset.tab === initialTab));
+  renderTab(initialTab);
 }
 
 async function computeStorage() {

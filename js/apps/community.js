@@ -40,7 +40,7 @@ export async function mountCommunity(root, ctx) {
         <div class="game-card-thumb">${escapeHtml(g.thumb || "🎮")}</div>
         <div class="game-card-body">
           <div class="game-card-title">${escapeHtml(g.title || "Untitled")}</div>
-          <div class="game-card-author">by @${escapeHtml(g.authorUsername || "anon")}</div>
+          <div class="game-card-author">by @${escapeHtml(g.authorUsername || "anon")}${g.multiplayer ? ' · <span class="pill">multiplayer</span>' : ""}</div>
           <div class="game-card-desc">${escapeHtml((g.description || "").slice(0, 140))}</div>
           <div class="game-card-footer">
             <button data-act="play">Play</button>
@@ -59,8 +59,13 @@ export async function mountCommunity(root, ctx) {
   async function playGame(id) {
     const g = await getGame(id);
     if (!g) return;
+    let code = g.code || "";
+    if (g.multiplayer) {
+      const room = prompt("Room code to join, or leave blank to create one:") || "";
+      code = injectRoomCode(code, room.trim().toUpperCase());
+    }
     // Open in a Blizzard browser tab (no pop-up).
-    ctx.launchApp("browser", { initialHtml: g.code || "", initialTitle: g.title || "Game" });
+    ctx.launchApp("browser", { initialHtml: code, initialTitle: g.title || "Game" });
   }
 
   async function installGame(id) {
@@ -131,8 +136,14 @@ function openPublishDialog(ctx, onDone) {
     const code = overlay.querySelector("#pg-code").value.trim() ||
       "<!doctype html><body><h1>Hello!</h1></body>";
     if (!title) { alert("Please enter a title."); return; }
-    await publishGame(ctx.user.uid, ctx.user.username, { title, description, thumb, code });
+    await publishGame(ctx.user.uid, ctx.user.username, { title, description, thumb, code, multiplayer: false });
     overlay.remove();
     onDone();
   };
+}
+
+function injectRoomCode(html, roomCode) {
+  const script = `<script>window.__blizzardRoomCode=${JSON.stringify(roomCode || "")};<\/script>`;
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + script);
+  return script + html;
 }

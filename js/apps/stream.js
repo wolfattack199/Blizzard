@@ -5,7 +5,8 @@
 import {
   subscribeLiveStreams, getStream, rtdbSet, rtdbPush, rtdbOn,
   endStream, subscribeStreamChat, sendStreamChat,
-  loadUser, reportSite
+  loadUser, reportSite,
+  followStreamer, unfollowStreamer, isFollowing
 } from "../firebase.js";
 import { escapeHtml } from "../os/wm.js";
 import { avatarHtml } from "../os/avatar.js";
@@ -21,6 +22,16 @@ export async function mountStream(root, ctx) {
 }
 
 export async function renderTwitchHome(host, ctx) {
+  // Auto-resume: if the user was previously watching a stream (e.g. they
+  // refreshed the tab), jump straight back to that stream as long as it's
+  // still live. Wipes the marker once consumed so manual Back works.
+  const lastId = loadLastViewing(ctx?.user?.uid);
+  if (lastId) {
+    const s = await getStream(lastId).catch(() => null);
+    if (s?.live) { return openViewer(lastId, host, ctx); }
+    clearViewing(ctx?.user?.uid);
+  }
+
   host.innerHTML = `
     <div class="twitch-home">
       <div class="twitch-topbar">
@@ -197,10 +208,31 @@ export async function renderTwitchHome(host, ctx) {
 // --------------------------------------------------------------------------
 // Viewer: WebRTC peer to the broadcaster, signaled via Firebase.
 // --------------------------------------------------------------------------
+// Each browser tab "remembers" which stream the user was watching so a
+// refresh restores them to the same channel instead of dumping them back to
+// the lobby. Cleared on Back. Scoped per Blizzard user.
+function viewerStorageKey(uid) { return `blizzard.stream.lastViewing.${uid || "guest"}`; }
+function rememberViewingStream(uid, streamId) {
+  try { localStorage.setItem(viewerStorageKey(uid), streamId || ""); } catch {}
+}
+function loadLastViewing(uid) {
+  try { return localStorage.getItem(viewerStorageKey(uid)) || ""; } catch { return ""; }
+}
+function clearViewing(uid) {
+  try { localStorage.removeItem(viewerStorageKey(uid)); } catch {}
+}
+
 async function openViewer(streamId, host, ctx) {
   const stream = await getStream(streamId);
   if (!stream) return;
-  if (!stream.live) { alert("This stream just ended."); return; }
+  if (!stream.live) {
+    // Don't strand the user on a dead stream after a reload — wipe + bail.
+    clearViewing(ctx.user.uid);
+    alert("This stream just ended.");
+    renderTwitchHome(host, ctx);
+    return;
+  }
+  rememberViewingStream(ctx.user.uid, streamId);
 
   host.innerHTML = `
     <div class="app" style="background:#000">
@@ -212,10 +244,17 @@ async function openViewer(streamId, host, ctx) {
       </div>
       <div class="stream-stage">
         <div class="stream-video-col">
-          <video data-bind="v" autoplay playsinline></video>
+          <video data-bind="v" autoplay playsinline controls></video>
           <div class="stream-info">
-            <div style="font-weight:600;font-size:16px;color:#fff">${escapeHtml(stream.title || "Untitled stream")}</div>
-            <div style="color:#adadb8;font-size:12.5px;margin-top:2px">by @${escapeHtml(stream.ownerUsername || "anon")}</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;font-size:16px;color:#fff">${escapeHtml(stream.title || "Untitled stream")}</div>
+                <div style="color:#adadb8;font-size:12.5px;margin-top:2px">by @${escapeHtml(stream.ownerUsername || "anon")}</div>
+              </div>
+              ${stream.ownerUid !== ctx.user.uid
+                ? `<button data-act="follow" style="background:#9147ff;border-color:#9147ff;color:#fff;padding:6px 14px;font-weight:600">Follow</button>`
+                : ""}
+            </div>
             <div data-bind="status" style="color:#adadb8;font-size:11.5px;margin-top:6px">Connecting…</div>
           </div>
         </div>
@@ -274,11 +313,13 @@ async function openViewer(streamId, host, ctx) {
   let remoteSet = false;
 
   pc.ontrack = (ev) => {
+    console.log("Stream track received", ev.track?.kind, streamId);
     v.srcObject = ev.streams[0];
+    v.play?.().catch(() => {});
     status.textContent = "🟢 Watching live";
   };
   pc.onicecandidate = (ev) => {
-    if (ev.candidate) rtdbPush(`streams/${streamId}/ice/viewer/${viewerKey}`, ev.candidate.toJSON());
+    if (ev.candidate) rtdbPush(`streams/${streamId}/ice/viewer/${viewerKey}`, serializeIceCandidate(ev.candidate));
   };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "connecting") status.textContent = "Connecting…";
@@ -290,13 +331,13 @@ async function openViewer(streamId, host, ctx) {
   const unsubOffer = rtdbOn(`streams/${streamId}/offers/${viewerKey}/offer`, "value", async (val) => {
     if (!val) return;
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(val));
+      await pc.setRemoteDescription(new RTCSessionDescription(normalizeSessionDescription(val)));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await rtdbSet(`streams/${streamId}/offers/${viewerKey}/answer`, answer.toJSON());
+      await rtdbSet(`streams/${streamId}/offers/${viewerKey}/answer`, serializeSessionDescription(pc.localDescription || answer));
       remoteSet = true;
       for (const c of pendingIce) {
-        try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+        try { await pc.addIceCandidate(new RTCIceCandidate(normalizeIceCandidate(c))); } catch {}
       }
       pendingIce.length = 0;
     } catch (e) {
@@ -307,7 +348,7 @@ async function openViewer(streamId, host, ctx) {
   // Receive ICE from broadcaster — queue until remote SDP is set
   const unsubIce = rtdbOn(`streams/${streamId}/ice/host/${viewerKey}`, "child_added", ({ val }) => {
     if (!remoteSet) { pendingIce.push(val); return; }
-    pc.addIceCandidate(new RTCIceCandidate(val)).catch(() => {});
+    pc.addIceCandidate(new RTCIceCandidate(normalizeIceCandidate(val))).catch(() => {});
   });
 
   // Signal our presence
@@ -318,8 +359,26 @@ async function openViewer(streamId, host, ctx) {
     try { unsubIce(); } catch {}
     try { unsubChat(); } catch {}
     try { pc.close(); } catch {}
+    clearViewing(ctx.user.uid);
     renderTwitchHome(host, ctx);
   };
+
+  const followBtn = host.querySelector('[data-act="follow"]');
+  if (followBtn) {
+    const refreshFollowBtn = async () => {
+      const f = await isFollowing(ctx.user.uid, stream.ownerUid).catch(() => false);
+      followBtn.textContent = f ? "Following ✓" : "Follow";
+      followBtn.style.background  = f ? "transparent" : "#9147ff";
+      followBtn.style.borderColor = f ? "#9147ff"     : "#9147ff";
+    };
+    refreshFollowBtn();
+    followBtn.onclick = async () => {
+      const f = await isFollowing(ctx.user.uid, stream.ownerUid).catch(() => false);
+      if (f) await unfollowStreamer(ctx.user.uid, stream.ownerUid);
+      else   await followStreamer(ctx.user.uid, stream.ownerUid);
+      refreshFollowBtn();
+    };
+  }
 
   host.querySelector('[data-act="report"]').onclick = async () => {
     const reason = prompt(`Report @${stream.ownerUsername}'s stream "${stream.title || "Untitled"}".\n\nWhy are you reporting it?`);
@@ -332,5 +391,36 @@ async function openViewer(streamId, host, ctx) {
     } catch (e) {
       alert("Report failed: " + e.message);
     }
+  };
+}
+
+function serializeSessionDescription(desc) {
+  if (!desc) return null;
+  if (typeof desc.toJSON === "function") return desc.toJSON();
+  return { type: desc.type, sdp: desc.sdp };
+}
+
+function serializeIceCandidate(candidate) {
+  if (!candidate) return null;
+  if (typeof candidate.toJSON === "function") return candidate.toJSON();
+  const out = {
+    candidate: candidate.candidate,
+    sdpMid: candidate.sdpMid,
+    sdpMLineIndex: candidate.sdpMLineIndex
+  };
+  if (candidate.usernameFragment != null) out.usernameFragment = candidate.usernameFragment;
+  return out;
+}
+
+function normalizeSessionDescription(desc) {
+  return { type: desc?.type, sdp: desc?.sdp };
+}
+
+function normalizeIceCandidate(candidate) {
+  return {
+    candidate: candidate?.candidate,
+    sdpMid: candidate?.sdpMid ?? null,
+    sdpMLineIndex: candidate?.sdpMLineIndex ?? null,
+    usernameFragment: candidate?.usernameFragment
   };
 }

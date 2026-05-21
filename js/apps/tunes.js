@@ -1,11 +1,11 @@
-// Blizzard Tunes — Spotify-like for music + podcasts. Tracks are uploaded
+// Music — Spotify-like for songs + podcasts. Tracks are uploaded
 // by users; everyone can browse. Each track is an audio blob in Firebase.
 // Available as a desktop app AND as blizz://tunes inside the browser.
 
 import {
   subscribeTunes, publishTune, getTuneBlob, deleteTune, incrementTunePlays,
   listPlaylists, createPlaylist, updatePlaylist, deletePlaylist,
-  TUNE_MAX_BYTES
+  TUNE_MAX_BYTES, TUNE_ACCEPTED_EXTS
 } from "../firebase.js";
 import { escapeHtml } from "../os/wm.js";
 import { resizeImageToDataURL } from "../os/avatar.js";
@@ -21,7 +21,7 @@ export async function renderTunes(host, ctx) {
       <div class="tunes-side">
         <div class="tunes-brand">
           <span style="font-size:22px">🎶</span>
-          <span style="font-weight:600;letter-spacing:0.5px">Blizzard Tunes</span>
+          <span style="font-weight:600;letter-spacing:0.5px">Music</span>
         </div>
         <div class="tunes-nav">
           <div class="tunes-nav-item active" data-view="discover">🔥 Discover</div>
@@ -31,6 +31,7 @@ export async function renderTunes(host, ctx) {
           <div class="tunes-nav-item" data-view="playlists">📁 My Playlists</div>
         </div>
         <button class="primary" data-act="upload" style="margin-top:14px">⬆ Upload track</button>
+        <div class="muted" style="font-size:11.5px;margin-top:6px">Accepted: ${TUNE_ACCEPTED_EXTS.join(", ")}. Limit ${TUNE_MAX_BYTES/1024/1024} MB.</div>
         <button data-act="newpl" style="margin-top:6px">＋ New playlist</button>
         <input type="file" accept="audio/*" multiple data-bind="file" style="display:none">
       </div>
@@ -207,6 +208,14 @@ export async function renderTunes(host, ctx) {
   host.querySelector('[data-act="upload"]').onclick = () => fileInput.click();
   fileInput.addEventListener("change", async () => {
     for (const f of fileInput.files) {
+      if (!isAcceptedAudio(f)) {
+        alert(`"${f.name}" is not a supported audio file. Use ${TUNE_ACCEPTED_EXTS.join(", ")}.`);
+        continue;
+      }
+      if (f.size > TUNE_MAX_BYTES) {
+        alert(`"${f.name}" is too large (${(f.size/1024/1024).toFixed(1)} MB). Limit is ${TUNE_MAX_BYTES/1024/1024} MB.`);
+        continue;
+      }
       const title = prompt(`Title for "${f.name}"?`, f.name.replace(/\.[^.]+$/, ""));
       if (title === null) continue;
       const artist = prompt(`Artist? (your username = "${ctx.user.username}")`, ctx.user.username) || ctx.user.username;
@@ -235,4 +244,9 @@ export async function renderTunes(host, ctx) {
   };
 
   return () => unsub();
+}
+
+function isAcceptedAudio(file) {
+  const name = (file?.name || "").toLowerCase();
+  return file?.type?.startsWith("audio/") || TUNE_ACCEPTED_EXTS.some((ext) => name.endsWith(ext));
 }

@@ -15,6 +15,10 @@
   --danger: #ff6b7a;
   --ok: #5bd6a4;
   --warn: #ffd66e;
+  --tier-bronze: #cd7f32;
+  --tier-silver: #c0c0c0;
+  --tier-gold: #ffd700;
+  --tier-platinum: linear-gradient(135deg, var(--accent), var(--accent-2));
   --radius: 10px;
   --radius-sm: 6px;
   --shadow-1: 0 4px 18px rgba(0, 0, 0, 0.35);
@@ -269,6 +273,37 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
   font-size: 11px; font-weight: 600; letter-spacing: 0.4px;
 }
 
+.account-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-glass);
+}
+.account-modal-card {
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 22px;
+}
+.account-modal-card h2 { margin: 0 0 12px; font-weight: 500; }
+.account-modal-copy { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.account-warning {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  padding: 10px;
+  user-select: text;
+}
+.account-warning small { color: var(--text-2); display: block; margin-top: 6px; }
+
 /* Context menu */
 .context-menu {
   position: fixed;
@@ -289,6 +324,191 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 }
 .context-menu-item:hover { background: var(--accent-soft); color: var(--text-0); }
 .context-menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+/* ===== Toast notifications (bottom-right above taskbar) ================ */
+.toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--taskbar-h, 46px) + 16px);
+  display: flex; flex-direction: column-reverse; gap: 8px;
+  z-index: 8500;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  width: 340px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  padding: 10px 12px;
+  display: flex; align-items: flex-start; gap: 10px;
+  color: var(--text-0);
+  transform: translateX(120%);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.15s;
+  opacity: 0;
+}
+.toast.toast-in  { transform: translateX(0); opacity: 1; }
+.toast.toast-out { transform: translateX(120%); opacity: 0; }
+.toast-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background-size: cover; background-position: center;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px; color: #06122a;
+  flex-shrink: 0;
+}
+.toast-body { flex: 1; min-width: 0; cursor: pointer; }
+.toast-title { font-weight: 600; font-size: 13.5px; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast-text {
+  font-size: 12.5px;
+  color: var(--text-1);
+  margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.toast-context { font-size: 11px; color: var(--text-2); margin-top: 4px; }
+.toast-close {
+  background: transparent; border: none;
+  color: var(--text-2);
+  font-size: 16px; line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.toast-close:hover { color: var(--text-0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: opacity 0.2s; transform: none; }
+  .toast.toast-out { transform: none; }
+}
+
+/* ===== Voice-call UI (Discord-style centered) ======================== */
+.call-overlay, .call-ringer {
+  position: fixed; inset: 0;
+  z-index: 9100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 9, 18, 0.7);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+.call-card-big, .call-ringer-card {
+  width: 420px; max-width: 90vw;
+  background: linear-gradient(180deg, #1a1f2e 0%, #11141a 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-2);
+  padding: 36px 28px 28px;
+  text-align: center;
+  color: var(--text-0);
+  animation: call-card-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes call-card-in {
+  0%   { opacity: 0; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.call-avatar-big {
+  width: 132px; height: 132px;
+  border-radius: 50%;
+  margin: 0 auto 18px;
+  background-size: cover; background-position: center;
+  display: flex; align-items: center; justify-content: center;
+  color: #06122a; font-weight: 800; font-size: 48px;
+  position: relative;
+  box-shadow:
+    0 0 0 4px rgba(90, 169, 255, 0.22),
+    0 0 28px rgba(124, 199, 255, 0.45),
+    0 14px 40px rgba(0, 0, 0, 0.55);
+  animation: call-avatar-pulse 1.6s ease-in-out infinite;
+}
+.call-avatar-big.ringing {
+  animation: call-avatar-ring 1.1s ease-in-out infinite;
+}
+@keyframes call-avatar-pulse {
+  0%,100% { box-shadow: 0 0 0 4px rgba(90, 169, 255, 0.22), 0 0 28px rgba(124, 199, 255, 0.45), 0 14px 40px rgba(0,0,0,0.55); }
+  50%     { box-shadow: 0 0 0 14px rgba(90, 169, 255, 0.06), 0 0 36px rgba(124, 199, 255, 0.55), 0 14px 40px rgba(0,0,0,0.55); }
+}
+@keyframes call-avatar-ring {
+  0%,100% { box-shadow: 0 0 0 4px rgba(91, 214, 164, 0.32), 0 0 28px rgba(91, 214, 164, 0.55), 0 14px 40px rgba(0,0,0,0.55); transform: scale(1); }
+  50%     { box-shadow: 0 0 0 18px rgba(91, 214, 164, 0.06), 0 0 40px rgba(91, 214, 164, 0.7),  0 14px 40px rgba(0,0,0,0.55); transform: scale(1.04); }
+}
+
+.call-name-big { font-size: 22px; font-weight: 600; letter-spacing: 0.3px; }
+.call-sub-big {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-family: var(--mono);
+}
+
+.call-controls-big {
+  margin-top: 26px;
+  display: flex; gap: 18px; justify-content: center;
+}
+.call-controls-big button {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-0);
+  transition: transform 0.12s, background 0.12s;
+}
+.call-controls-big button:hover { background: rgba(255, 255, 255, 0.12); transform: translateY(-1px); }
+.call-controls-big button.muted   { background: rgba(255, 107, 122, 0.2); color: var(--danger); }
+.call-controls-big button.danger  { background: var(--danger); color: #1a0608; }
+.call-controls-big button.danger:hover { background: #ff8590; }
+.call-controls-big button.accept  { background: var(--ok); color: #07291a; }
+.call-controls-big button.accept:hover { background: #7be1b8; }
+
+/* ===== Debug menu (Ctrl+Alt+G) ======================================== */
+.debug-overlay {
+  position: fixed; inset: 0;
+  background: rgba(5, 9, 18, 0.55);
+  z-index: 9700;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.debug-card {
+  width: 720px; max-width: 92vw;
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-2);
+  color: var(--text-0);
+  user-select: text;
+}
+.debug-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.debug-body { overflow-y: auto; padding: 6px 14px 14px; }
+.debug-section { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.debug-section:last-child { border-bottom: none; }
+.debug-section-head {
+  font-size: 11px; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.debug-section-body { display: flex; flex-wrap: wrap; gap: 6px; }
+.debug-section-body button {
+  padding: 6px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-0);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.debug-section-body button:hover { background: var(--bg-3); border-color: var(--accent); }
 
 /* Username autocomplete (used in dialogs) */
 .up-suggestions {
